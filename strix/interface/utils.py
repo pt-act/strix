@@ -1253,6 +1253,37 @@ def rewrite_localhost_targets(targets_info: list[dict[str, Any]], host_gateway: 
                 details["target_ip"] = host_gateway
 
 
+_ALLOWED_REPO_URL_SCHEMES = frozenset({"http", "https", "ssh", "git"})
+
+
+def validate_repo_url(repo_url: str) -> str:
+    """Reject repository URLs that rely on unsafe git transports.
+
+    ``git clone`` understands remote-helper transports written as
+    ``<transport>::<address>`` (for example ``ext::sh -c '...'`` or ``fd::``),
+    several of which can execute arbitrary commands on the host. Those are
+    rejected outright. URLs that carry an explicit ``scheme://`` must use a
+    scheme on the allowlist. scp-style SSH (``git@host:org/repo.git``) and bare
+    local paths carry no scheme and remain supported.
+    """
+
+    candidate = repo_url.strip()
+    if not candidate:
+        raise ValueError("Repository URL must be a non-empty string")
+
+    helper = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*)::", candidate)
+    if helper:
+        raise ValueError(f"Unsupported git transport '{helper.group(1)}::' in repository URL")
+
+    scheme_match = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*)://", candidate)
+    if scheme_match:
+        scheme = scheme_match.group(1).lower()
+        if scheme not in _ALLOWED_REPO_URL_SCHEMES:
+            raise ValueError(f"Unsupported repository URL scheme: {scheme}")
+
+    return candidate
+
+
 def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
     console = Console()
 
@@ -1260,6 +1291,7 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
     if git_executable is None:
         raise FileNotFoundError("Git executable not found in PATH")
 
+    repo_url = validate_repo_url(repo_url)
     validated_run_name = validate_run_name(run_name)
     temp_dir = Path(tempfile.gettempdir()) / "strix_repos" / validated_run_name
     temp_dir.mkdir(parents=True, exist_ok=True)
