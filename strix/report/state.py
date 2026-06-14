@@ -180,6 +180,7 @@ class ReportState:
         agent_id: str | None = None,
         agent_name: str | None = None,
         evidence_class: EvidenceClass = "none",
+        artifacts: list[dict[str, Any]] | None = None,
     ) -> str:
         if evidence_class not in _VALID_EVIDENCE_CLASSES:
             raise ValueError(
@@ -234,6 +235,8 @@ class ReportState:
             report["agent_id"] = agent_id
         if agent_name:
             report["agent_name"] = agent_name
+        if artifacts:
+            report["artifacts"] = artifacts
 
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")

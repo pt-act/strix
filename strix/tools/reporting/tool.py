@@ -170,6 +170,7 @@ async def _do_create(  # noqa: PLR0912
     agent_id: str | None = None,
     agent_name: str | None = None,
     evidence_class: str = "none",
+    artifacts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     fields = {
@@ -279,6 +280,7 @@ async def _do_create(  # noqa: PLR0912
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
             evidence_class=evidence_class,  # type: ignore[arg-type]
+            artifacts=artifacts,
         )
     except (ImportError, AttributeError) as e:
         logger.exception("create_vulnerability_report persistence failed")
@@ -322,6 +324,7 @@ async def create_vulnerability_report(
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     evidence_class: str = "none",
+    artifacts: list[dict[str, Any]] | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -526,5 +529,6 @@ async def create_vulnerability_report(
         agent_id=agent_id,
         agent_name=agent_name,
         evidence_class=evidence_class,
+        artifacts=artifacts,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
