@@ -125,9 +125,24 @@ class TokenRegistry:
         return record
 
     def lookup(self, token: str) -> MintRecord | None:
+        """Return the mint record for a token, or ``None`` if unminted."""
         with self._cursor() as cur:
             row = cur.execute(
                 "SELECT * FROM mints WHERE token = ?", (token,)
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_mint(row)
+
+    def lookup_by_candidate(
+        self, engagement_id: str, candidate_id: str
+    ) -> MintRecord | None:
+        """Return the most recent mint for a candidate in an engagement."""
+        with self._cursor() as cur:
+            row = cur.execute(
+                "SELECT * FROM mints WHERE engagement_id = ? AND candidate_id = ?"
+                " ORDER BY created_at DESC LIMIT 1",
+                (engagement_id, candidate_id),
             ).fetchone()
         if row is None:
             return None
