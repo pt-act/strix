@@ -44,3 +44,8 @@ def runtime_state_dir(run_dir: Path) -> Path:
 
 def run_record_path(run_dir: Path) -> Path:
     return run_dir / RUN_RECORD_FILENAME
+
+
+def oob_registry_path(run_dir: Path) -> Path:
+    """Return the durable SQLite path for the OOB token registry."""
+    return runtime_state_dir(run_dir) / "oob_registry.sqlite"
