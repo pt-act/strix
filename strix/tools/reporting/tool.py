@@ -169,6 +169,7 @@ async def _do_create(  # noqa: PLR0912
     code_locations: list[dict[str, Any]] | None,
     agent_id: str | None = None,
     agent_name: str | None = None,
+    evidence_class: str = "none",
 ) -> dict[str, Any]:
     errors: list[str] = []
     fields = {
@@ -277,15 +278,17 @@ async def _do_create(  # noqa: PLR0912
             code_locations=parsed_locations,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
+            evidence_class=evidence_class,  # type: ignore[arg-type]
         )
     except (ImportError, AttributeError) as e:
         logger.exception("create_vulnerability_report persistence failed")
         return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
     else:
+        persisted_report = report_state.vulnerability_reports[-1]
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
             report_id,
-            severity,
+            persisted_report["severity"],
             cvss_score,
             title,
         )
@@ -293,8 +296,11 @@ async def _do_create(  # noqa: PLR0912
             "success": True,
             "message": f"Vulnerability report '{title}' created successfully",
             "report_id": report_id,
-            "severity": severity,
+            "severity": persisted_report["severity"],
+            "original_severity": persisted_report.get("original_severity", severity),
             "cvss_score": cvss_score,
+            "evidence_class": persisted_report.get("evidence_class", "none"),
+            "impact_gate_decision": persisted_report.get("impact_gate_decision", "kept_from_cvss"),
         }
 
 
@@ -315,6 +321,7 @@ async def create_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    evidence_class: str = "none",
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -482,6 +489,13 @@ async def create_vulnerability_report(
             - Padding ``fix_before`` with surrounding context lines
               that aren't part of the fix.
             - Duplicating the same change across multiple locations.
+        evidence_class: Evidence backing the finding. One of ``"diff"``
+            (cross-identity/response differential), ``"callback"``
+            (correlated OOB callback), ``"reachability"`` (concrete
+            route→handler→sink path), or ``"none"`` (default). A value of
+            ``"none"`` down-grades the reported severity to
+            ``info``/unconfirmed; the finding stays visible and the
+            original CVSS severity is recorded on the report.
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}
     raw_agent_id = inner.get("agent_id")
@@ -511,5 +525,6 @@ async def create_vulnerability_report(
         code_locations=code_locations,
         agent_id=agent_id,
         agent_name=agent_name,
+        evidence_class=evidence_class,
     )
     return json.dumps(result, ensure_ascii=False, default=str)

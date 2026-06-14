@@ -1,0 +1,215 @@
+project:
+  name: strix-bounty-grade-engine
+  objective: >
+    Turn strix from a breadth-oriented scanner into a stateful, auth-aware, impact-gated bounty
+    engine by implementing durable identity replay, OOB confirmation, unified attack-surface
+    inventory, a race harness, and business-logic violation testing — with every finding backed
+    by a diff, callback, or reachability/state artifact.
+  created: 2026-06-14
+  status: executing
+  operator: human:operator
+
+specs:
+  - id: phase-0-foundation-hardening
+    title: Foundation & Quick Wins
+    type: unit
+    status: planned
+    file: .agents/specs/phase-0-foundation-hardening/spec.md
+    depends_on: []
+    produces:
+      - name: pinned_toolchain_image
+        shape: "docker-image{gitleaks,trufflehog,trivy,ruff,pytest} with build-time self-check"
+        consumers: [phase-3-attack-surface-inventory]
+      - name: scanner_runner_tool
+        shape: "function-tool{name,version,target,findings[],raw_output_ref}"
+        consumers: [phase-3-attack-surface-inventory]
+      - name: pure_url_validator
+        shape: "module{normalize,decode_alternate_ip,is_internal,validate_redirect_chain} no docker/network side effects"
+        consumers: [phase-1-identity-differential, phase-2-oob-oracle, phase-3-attack-surface-inventory]
+      - name: oob_confirmation_seam
+        shape: "interface{confirm(target,token): null | unconfirmed} — null implementation in Phase 0"
+        consumers: [phase-2-oob-oracle]
+      - name: impact_gate
+        shape: "report-layer policy{evidence_class ∈ {diff,callback,reachability,none}; none ⇒ severity down-graded}"
+        consumers: [phase-1-identity-differential, phase-2-oob-oracle, phase-4-race-harness, phase-5-business-logic-testing]
+    consumes: []
+
+  - id: phase-1-identity-differential
+    title: Identity State + Differential
+    type: unit
+    status: planned
+    file: .agents/specs/phase-1-identity-differential/spec.md
+    depends_on: [phase-0-foundation-hardening]
+    produces:
+      - name: identity_store
+        shape: "per-target durable store{role,cookies,tokens,headers,provenance,freshness}"
+        consumers: [phase-4-race-harness, phase-5-business-logic-testing]
+      - name: differential_engine
+        shape: "pure function{responses,axis} → semantic deltas{status-class,body-structure,auth-signal,set-cookie,normalized-length}"
+        consumers: [phase-4-race-harness, phase-5-business-logic-testing]
+      - name: replay_engine
+        shape: "function{request_id,identity} → parsed response with auth material substituted"
+        consumers: [phase-4-race-harness, phase-5-business-logic-testing]
+      - name: auth_matrix_tool
+        shape: "function-tool{request_id} → matrix + pairwise diffs + flagged IDOR/BFLA candidates"
+        consumers: [phase-5-business-logic-testing]
+      - name: volatile_field_normalizer
+        shape: "pure function{response} → response with timestamps/CSRF/nonces/request-ids canonicalized"
+        consumers: [phase-4-race-harness, phase-5-business-logic-testing]
+    consumes:
+      - name: pure_url_validator
+        from: phase-0-foundation-hardening
+      - name: impact_gate
+        from: phase-0-foundation-hardening
+
+  - id: phase-2-oob-oracle
+    title: Native OOB Oracle
+    type: unit
+    status: planned
+    file: .agents/specs/phase-2-oob-oracle/spec.md
+    depends_on: [phase-0-foundation-hardening]
+    produces:
+      - name: oob_listener_sidecar
+        shape: "sidecar{dns,http(s)} capturing inbound hits with protocol, token, source_ip, timestamp, raw"
+        consumers: [phase-5-business-logic-testing]
+      - name: token_registry
+        shape: "per-engagement durable store{token → candidate, request_ref, window}"
+        consumers: [phase-5-business-logic-testing]
+      - name: correlator
+        shape: "function{hit} → attributed candidate | quarantined"
+        consumers: [phase-5-business-logic-testing]
+      - name: inject_confirm_tool
+        shape: "function-tool{payload_class, candidate} → confirmed | unconfirmed with callback evidence"
+        consumers: [phase-5-business-logic-testing]
+    consumes:
+      - name: oob_confirmation_seam
+        from: phase-0-foundation-hardening
+      - name: impact_gate
+        from: phase-0-foundation-hardening
+
+  - id: phase-3-attack-surface-inventory
+    title: Unified Attack-Surface Inventory
+    type: unit
+    status: planned
+    file: .agents/specs/phase-3-attack-surface-inventory/spec.md
+    depends_on: [phase-0-foundation-hardening, phase-1-identity-differential]
+    produces:
+      - name: ranked_surface_map
+        shape: "per-target map{endpoint_key → method+URL, union(sources), union(params), score, provenance}"
+        consumers: [phase-5-business-logic-testing]
+      - name: endpoint_normalizer
+        shape: "function{EndpointObservation} → canonical endpoint key with recorded rules"
+        consumers: [phase-5-business-logic-testing]
+      - name: parameter_classifier
+        shape: "agent-proposed function{param,evidence} → class ∈ {object-id,url,html,file,amount,role,state}"
+        consumers: [phase-5-business-logic-testing]
+      - name: class_spray_library
+        shape: "deterministic mapping{class} → fixed payload set"
+        consumers: [phase-5-business-logic-testing]
+      - name: reachability_seam
+        shape: "white-box graph{route → handler → auth-middleware → sink} with reachable/unreachable/unknown"
+        consumers: [phase-5-business-logic-testing]
+    consumes:
+      - name: pinned_toolchain_image
+        from: phase-0-foundation-hardening
+      - name: scanner_runner_tool
+        from: phase-0-foundation-hardening
+      - name: differential_engine
+        from: phase-1-identity-differential
+
+  - id: phase-4-race-harness
+    title: Race Condition Harness
+    type: unit
+    status: planned
+    file: .agents/specs/phase-4-race-harness/spec.md
+    depends_on: [phase-1-identity-differential]
+    produces:
+      - name: race_harness_tool
+        shape: "function-tool{request_set, precondition, N, jitter} → {outcome_table, state_diff, verdict}"
+        consumers: [phase-5-business-logic-testing]
+      - name: precondition_manager
+        shape: "function{precondition} → baseline state | inconclusive with reset capability"
+        consumers: [phase-5-business-logic-testing]
+      - name: concurrent_dispatcher
+        shape: "async fan-out{N copies, shared session, jitter offsets} → per-copy outcomes"
+        consumers: [phase-5-business-logic-testing]
+    consumes:
+      - name: identity_store
+        from: phase-1-identity-differential
+      - name: replay_engine
+        from: phase-1-identity-differential
+      - name: differential_engine
+        from: phase-1-identity-differential
+      - name: volatile_field_normalizer
+        from: phase-1-identity-differential
+      - name: impact_gate
+        from: phase-0-foundation-hardening
+
+  - id: phase-5-business-logic-testing
+    title: Business-Logic State Testing
+    type: integration
+    status: planned
+    file: .agents/specs/phase-5-business-logic-testing/spec.md
+    depends_on: [phase-1-identity-differential, phase-2-oob-oracle, phase-3-attack-surface-inventory, phase-4-race-harness]
+    produces:
+      - name: business_logic_orchestrator
+        shape: "function{flow, invariant_kind} → executed sequence + deterministic artifact"
+        consumers: []
+      - name: violation_report
+        shape: "vulnerability_report{violated_invariant, executed_sequence, artifact: diff|callback|race-result}"
+        consumers: []
+    consumes:
+      - name: identity_store
+        from: phase-1-identity-differential
+      - name: replay_engine
+        from: phase-1-identity-differential
+      - name: differential_engine
+        from: phase-1-identity-differential
+      - name: auth_matrix_tool
+        from: phase-1-identity-differential
+      - name: oob_listener_sidecar
+        from: phase-2-oob-oracle
+      - name: token_registry
+        from: phase-2-oob-oracle
+      - name: correlator
+        from: phase-2-oob-oracle
+      - name: inject_confirm_tool
+        from: phase-2-oob-oracle
+      - name: ranked_surface_map
+        from: phase-3-attack-surface-inventory
+      - name: parameter_classifier
+        from: phase-3-attack-surface-inventory
+      - name: class_spray_library
+        from: phase-3-attack-surface-inventory
+      - name: reachability_seam
+        from: phase-3-attack-surface-inventory
+      - name: race_harness_tool
+        from: phase-4-race-harness
+      - name: precondition_manager
+        from: phase-4-race-harness
+      - name: impact_gate
+        from: phase-0-foundation-hardening
+
+milestones:
+  - name: foundation-ready
+    specs: [phase-0-foundation-hardening]
+    status: not_started
+  - name: primitives-ready
+    specs: [phase-1-identity-differential, phase-2-oob-oracle]
+    status: not_started
+  - name: surface-and-race-ready
+    specs: [phase-3-attack-surface-inventory, phase-4-race-harness]
+    status: not_started
+  - name: business-logic-ready
+    specs: [phase-5-business-logic-testing]
+    status: not_started
+
+history:
+  - timestamp: 2026-06-14T00:00:00Z
+    event: project_created
+    by: operator
+    note: "Initialized from .agents/specs/README.md and PROJECT_MANIFEST.md v1.1"
+  - timestamp: 2026-06-14T00:05:00Z
+    event: manifest_locked
+    by: claude-kimi-k2p7-code
+    note: "6 specs defined, 1 integration spec, DAG invariants validated"
