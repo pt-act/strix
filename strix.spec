@@ -178,6 +178,7 @@ hiddenimports += collect_submodules('textual')
 hiddenimports += collect_submodules('rich')
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('pygments')
+hiddenimports += collect_submodules('strix.core.net')
 
 excludes = [
     # Sandbox-only packages
