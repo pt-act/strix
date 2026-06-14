@@ -10,6 +10,8 @@ from contextvars import ContextVar
 from pathlib import Path  # noqa: TC003  used at runtime by ``setup_scan_logging``
 from typing import TYPE_CHECKING
 
+import litellm
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,8 +69,6 @@ _TRACKED_ROOTS: tuple[str, ...] = ("strix", "openai.agents")
 def configure_dependency_logging() -> None:
     """Quiet dependency logging/warnings that obscure Strix scan logs."""
     with contextlib.suppress(Exception):
-        import litellm
-
         litellm_logging = litellm._logging
         litellm_logging._disable_debugging()  # type: ignore[no-untyped-call]
 

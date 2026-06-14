@@ -86,3 +86,6 @@ schema.graphql
 
 .opencode/
 .agents/
+
+# Project execution manifest — generated state, not source.
+manifest.yml

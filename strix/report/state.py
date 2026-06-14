@@ -1,12 +1,12 @@
+from __future__ import annotations
+
 import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
-
-from agents.usage import Usage
 
 from strix.core.paths import run_dir_for
 from strix.report.usage import LLMUsageLedger
@@ -19,16 +19,39 @@ from strix.report.writer import (
 from strix.telemetry import posthog, scarf
 
 
+if TYPE_CHECKING:
+    from agents.usage import Usage
+
+
 logger = logging.getLogger(__name__)
 
-_global_report_state: Optional["ReportState"] = None
+EvidenceClass = Literal["diff", "callback", "reachability", "none"]
+_VALID_EVIDENCE_CLASSES: frozenset[str] = frozenset({"diff", "callback", "reachability", "none"})
 
 
-def get_global_report_state() -> Optional["ReportState"]:
+def _apply_impact_gate(
+    severity: str,
+    evidence_class: EvidenceClass,
+) -> tuple[str, str, str]:
+    """Return (final_severity, gate_decision, original_severity).
+
+    Evidence-less findings are down-graded to ``info`` so they remain visible
+    but do not crowd out evidence-backed findings. The original CVSS-derived
+    severity is preserved for inspection.
+    """
+    original_severity = severity.lower().strip()
+    if evidence_class == "none":
+        return "info", "downgraded_to_unconfirmed", original_severity
+    return original_severity, "kept_from_cvss", original_severity
+
+_global_report_state: ReportState | None = None
+
+
+def get_global_report_state() -> ReportState | None:
     return _global_report_state
 
 
-def set_global_report_state(report_state: "ReportState") -> None:
+def set_global_report_state(report_state: ReportState) -> None:
     global _global_report_state  # noqa: PLW0603
     _global_report_state = report_state
 
@@ -156,13 +179,26 @@ class ReportState:
         code_locations: list[dict[str, Any]] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
+        evidence_class: EvidenceClass = "none",
     ) -> str:
+        if evidence_class not in _VALID_EVIDENCE_CLASSES:
+            raise ValueError(
+                f"Invalid evidence_class '{evidence_class}'; "
+                f"must be one of: {sorted(_VALID_EVIDENCE_CLASSES)}"
+            )
+
+        final_severity, gate_decision, original_severity = _apply_impact_gate(
+            severity, evidence_class
+        )
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
         report: dict[str, Any] = {
             "id": report_id,
             "title": title.strip(),
-            "severity": severity.lower().strip(),
+            "severity": final_severity,
+            "original_severity": original_severity,
+            "evidence_class": evidence_class,
+            "impact_gate_decision": gate_decision,
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
 

@@ -100,9 +100,14 @@ module = [
     "docker.*",
     "caido_sdk_client.*",
     "pydantic_settings.*",
+    "agents.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["strix.tools.scanner_runner.tool"]
+disallow_untyped_decorators = false
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)
@@ -220,6 +225,7 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401"]
 "strix/report/usage.py" = ["PLC0415"]
+"strix/report/__init__.py" = ["PLC0415"]  # Lazy package exports via __getattr__
 "strix/config/models.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.
@@ -233,6 +239,7 @@ ignore = [
 # Tests assert on deterministic, well-known paths (e.g. ``/tmp/...``) as fixtures;
 # these are literals under mock, never real temp files.
 "tests/**/*.py" = ["S108"]
+"tests/test_interface_utils_import.py" = ["PLC0415", "PLR0402"]  # Imports inside tests to verify lazy import behavior
 
 [tool.ruff.lint.isort]
 force-single-line = false

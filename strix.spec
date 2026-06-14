@@ -167,6 +167,8 @@ hiddenimports = [
     'strix.tools.proxy.tools',
     'strix.tools.python.tool',
     'strix.tools.reporting.tool',
+    'strix.tools.scanner_runner',
+    'strix.tools.scanner_runner.tool',
     'strix.tools.thinking.tool',
     'strix.tools.todo.tools',
     'strix.tools.web_search.tool',
@@ -178,6 +180,7 @@ hiddenimports += collect_submodules('textual')
 hiddenimports += collect_submodules('rich')
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('pygments')
+hiddenimports += collect_submodules('strix.core.net')
 
 excludes = [
     # Sandbox-only packages
