@@ -100,9 +100,14 @@ module = [
     "docker.*",
     "caido_sdk_client.*",
     "pydantic_settings.*",
+    "agents.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["strix.tools.scanner_runner.tool"]
+disallow_untyped_decorators = false
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)

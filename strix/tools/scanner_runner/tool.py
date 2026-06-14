@@ -10,7 +10,7 @@ import subprocess  # nosec B404
 from pathlib import Path
 from typing import Any
 
-from agents import RunContextWrapper, function_tool  # type: ignore[import-not-found]
+from agents import RunContextWrapper, function_tool
 
 
 logger = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ def run_scanner(
     }
 
 
-@function_tool(timeout=300)  # type: ignore[misc]
+@function_tool(timeout=300)
 async def scanner_runner(
     ctx: RunContextWrapper,
     tool: str,
