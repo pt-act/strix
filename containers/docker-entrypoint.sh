@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+OOB_LOG="/workspace/interactsh.log"
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 
@@ -8,6 +9,12 @@ if [ ! -f /app/certs/ca.p12 ]; then
   echo "ERROR: CA certificate file /app/certs/ca.p12 not found."
   exit 1
 fi
+
+# Start the interactsh-client OOB sidecar in the background. The host-side
+# Python provider reads interactions from the mounted log file.
+interactsh-client -json -o "$OOB_LOG" > "$OOB_LOG.stdout" 2>&1 &
+OOB_PID=$!
+echo "Started interactsh-client with PID $OOB_PID (log: $OOB_LOG)"
 
 caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --allow-guests \
