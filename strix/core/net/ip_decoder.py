@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Callable
 
 
 _IPV4_OCTET_RE = re.compile(r"^(0x[0-9a-fA-F]+|0[0-7]+|[0-9]+)$")
@@ -103,7 +104,7 @@ def decode_ip_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Addre
     # Order matters: octal must precede decimal because a leading-zero octal
     # literal is also a valid decimal string, but Python's int() would parse
     # it as decimal and overflow the 32-bit IPv4 space.
-    decoders: list[object] = [
+    decoders: list[Callable[[str], ipaddress.IPv4Address | None]] = [
         _decode_pure_octal_ipv4,
         _decode_pure_hex_ipv4,
         _decode_decimal_ipv4,

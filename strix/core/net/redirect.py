@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from email.message import Message
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from strix.core.net.classifier import is_internal_target
 from strix.core.net.normalize import normalize_url
+
+
+class _HasHeaders(Protocol):
+    headers: Message
 
 
 _DEFAULT_MAX_HOPS = 10
@@ -26,12 +32,13 @@ class RedirectInternalTargetError(RedirectValidationError):
     """Raised when a redirect hop resolves to an internal target."""
 
 
-def _get_redirect_url(response, base_url: str) -> str | None:
+def _get_redirect_url(response: _HasHeaders, base_url: str) -> str | None:
     """Extract the next URL from a 3xx response, resolving relative URLs."""
     location = response.headers.get("Location") or response.headers.get("location")
     if not location:
         return None
-    return urljoin(base_url, location.strip())
+    location_str = str(location).strip()
+    return urljoin(base_url, location_str)
 
 
 def validate_redirect_chain(
@@ -65,7 +72,7 @@ def validate_redirect_chain(
         req = Request(current, headers=req_headers, method="HEAD")  # noqa: S310
 
         try:
-            with urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            with urlopen(req, timeout=timeout) as resp:  # noqa: S310  # nosec B310
                 if resp.status in {301, 302, 303, 307, 308}:
                     next_url = _get_redirect_url(resp, current)
                     if next_url is None:

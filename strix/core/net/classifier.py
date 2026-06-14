@@ -72,7 +72,8 @@ def is_internal_target(target: str) -> bool:
     if host is None:
         return False
 
-    if host in ("localhost", "0.0.0.0", "::"):
+    # Intentional localhost detection; these are valid internal-host markers.
+    if host in ("localhost", "0.0.0.0", "::"):  # nosec B104
         return True
 
     if _is_metadata_host(host):
