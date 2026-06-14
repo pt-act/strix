@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from email.message import Message
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from strix.core.net.classifier import is_internal_target
 from strix.core.net.normalize import normalize_url
+
+
+if TYPE_CHECKING:
+    from email.message import Message
 
 
 class _HasHeaders(Protocol):

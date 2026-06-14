@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 _IPV4_OCTET_RE = re.compile(r"^(0x[0-9a-fA-F]+|0[0-7]+|[0-9]+)$")
