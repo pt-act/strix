@@ -20,12 +20,25 @@ from strix.core.oob.correlator import Correlator
 from strix.core.oob.registry import TokenRegistry
 from strix.core.paths import oob_registry_path
 from strix.runtime.oob.provider import InteractshProvider
+from strix.tools.reporting.tool import _do_create
 
 
 if TYPE_CHECKING:
     from strix.runtime.oob.provider import OobProvider
 
 logger = logging.getLogger(__name__)
+
+
+_CVSS_OOB_CALLBACK: dict[str, str] = {
+    "attack_vector": "N",
+    "attack_complexity": "L",
+    "privileges_required": "N",
+    "user_interaction": "N",
+    "scope": "U",
+    "confidentiality": "H",
+    "integrity": "L",
+    "availability": "N",
+}
 
 
 def _run_dir_from_ctx(ctx: RunContextWrapper) -> Path:
@@ -193,5 +206,173 @@ async def confirm_oob_callback(
                 "reason": "no correlated callback in window",
             },
         )
+    finally:
+        registry.close()
+
+
+async def _promote_oob_candidate(
+    run_dir: Path,
+    provider: OobProvider,
+    registry: TokenRegistry,
+    engagement_id: str,
+    candidate_id: str,
+    *,
+    title: str,
+    description: str,
+    impact: str,
+    target: str,
+    technical_analysis: str,
+    poc_description: str,
+    poc_script_code: str,
+    remediation_steps: str,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cve: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Confirm an OOB callback and, if confirmed, file a report.
+
+    A report is created only when a correlated callback is observed within the
+    token window. The callback is attached as an ``oob_callback`` artifact with
+    ``evidence_class="callback"``. Absence of a callback returns a clean
+    ``unconfirmed`` result and no report is filed.
+    """
+    mint = registry.lookup_by_candidate(engagement_id, candidate_id)
+    if mint is None:
+        return {
+            "success": True,
+            "verdict": "unconfirmed",
+            "reason": "no token minted for candidate",
+        }
+
+    hits = await provider.poll_interactions()
+    correlator = Correlator(registry)
+    for hit in hits:
+        if hit.token != mint.token:
+            continue
+        record = correlator.correlate(hit, engagement_id)
+        if record.status == "confirmed":
+            artifact: dict[str, Any] = {
+                "artifact_type": "oob_callback",
+                "mime_type": "application/json",
+                "summary": f"Correlated OOB callback for candidate {candidate_id}",
+                "data": _to_tool_json(record),
+            }
+            report = await _do_create(
+                title=title,
+                description=description,
+                impact=impact,
+                target=target,
+                technical_analysis=technical_analysis,
+                poc_description=poc_description,
+                poc_script_code=poc_script_code,
+                remediation_steps=remediation_steps,
+                cvss_breakdown=_CVSS_OOB_CALLBACK,
+                endpoint=endpoint,
+                method=method,
+                cve=cve,
+                cwe=cwe,
+                code_locations=code_locations,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                evidence_class="callback",
+                artifacts=[artifact],
+            )
+            return {
+                "success": True,
+                "verdict": "confirmed",
+                "report": report,
+                "record": _to_tool_json(record),
+            }
+
+    return {
+        "success": True,
+        "verdict": "unconfirmed",
+        "reason": "no correlated callback in window",
+    }
+
+
+@function_tool(timeout=60, strict_mode=False)
+async def report_oob_confirmed_candidate(
+    ctx: RunContextWrapper,
+    engagement_id: str,
+    candidate_id: str,
+    title: str,
+    description: str,
+    impact: str,
+    target: str,
+    technical_analysis: str,
+    poc_description: str,
+    poc_script_code: str,
+    remediation_steps: str,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cve: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> str:
+    """Promote an OOB candidate to a finding only if a correlated callback exists.
+
+    This is the impact gate for blind vulnerability classes (SSRF, XXE, blind
+    XSS, etc.): a candidate is reported only when the strix-owned OOB listener
+    observes a real, correlated callback within the token window. The captured
+    callback is attached as an ``artifact_type="oob_callback"`` evidence
+    artifact and the report receives ``evidence_class="callback"``.
+
+    If no callback is observed, the function returns an explicit
+    ``unconfirmed`` verdict and does **not** file a vulnerability report.
+
+    Args:
+        engagement_id: Engagement boundary the candidate belongs to.
+        candidate_id: Unique candidate identifier within the engagement.
+        title: Finding title (e.g. "SSRF in image import via OOB callback").
+        description: How the vulnerability was discovered and what it is.
+        impact: Attacker outcome and business risk.
+        target: Affected URL or domain.
+        technical_analysis: Mechanism and root cause.
+        poc_description: Step-by-step reproduction.
+        poc_script_code: Working PoC code.
+        remediation_steps: Specific, actionable fix.
+        endpoint: Affected API path, when relevant.
+        method: HTTP method, when relevant.
+        cve: Bare CVE ID if certain, else omit.
+        cwe: Most specific child CWE, when relevant.
+        code_locations: White-box location objects, when available.
+        agent_id: Reporting agent id.
+        agent_name: Reporting agent name.
+    """
+    run_dir = _run_dir_from_ctx(ctx)
+    provider = await _oob_provider(ctx, run_dir)
+
+    registry = TokenRegistry(oob_registry_path(run_dir))
+    try:
+        result = await _promote_oob_candidate(
+            run_dir,
+            provider,
+            registry,
+            engagement_id,
+            candidate_id,
+            title=title,
+            description=description,
+            impact=impact,
+            target=target,
+            technical_analysis=technical_analysis,
+            poc_description=poc_description,
+            poc_script_code=poc_script_code,
+            remediation_steps=remediation_steps,
+            endpoint=endpoint,
+            method=method,
+            cve=cve,
+            cwe=cwe,
+            code_locations=code_locations,
+            agent_id=agent_id,
+            agent_name=agent_name,
+        )
+        return _dump_json(result)
     finally:
         registry.close()
