@@ -230,6 +230,9 @@ ignore = [
 "strix/interface/tui/app.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915", "SIM105"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
 "strix/interface/tui/renderers/agent_message_renderer.py" = ["PLC0415"]
+# Tests assert on deterministic, well-known paths (e.g. ``/tmp/...``) as fixtures;
+# these are literals under mock, never real temp files.
+"tests/**/*.py" = ["S108"]
 
 [tool.ruff.lint.isort]
 force-single-line = false
@@ -318,6 +321,6 @@ known_third_party = ["pydantic", "litellm"]
 # ============================================================================
 
 [tool.bandit]
-exclude_dirs = ["docs", "build", "dist"]
+exclude_dirs = ["docs", "build", "dist", "tests"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"
