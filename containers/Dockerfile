@@ -2,6 +2,13 @@ FROM kalilinux/kali-rolling:latest
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
 
+# Pinned tool versions for reproducible container builds.
+ARG GITLEAKS_VERSION=v8.30.1
+ARG TRUFFLEHOG_VERSION=v3.95.5
+ARG TRIVY_VERSION=v0.71.0
+ARG RUFF_VERSION=0.15.7
+ARG PYTEST_VERSION=8.3.5
+
 RUN apt-get update && \
     apt-get install -y kali-archive-keyring sudo && \
     apt-get update && \
@@ -131,7 +138,7 @@ RUN git clone https://github.com/aravind0x7/JS-Snooper.git && \
 
 USER root
 
-RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+RUN curl -sSfL "https://raw.githubusercontent.com/trufflesecurity/trufflehog/${TRUFFLEHOG_VERSION}/scripts/install.sh" | sh -s -- -b /usr/local/bin "${TRUFFLEHOG_VERSION}"
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     case "$ARCH" in \
@@ -139,7 +146,7 @@ RUN set -eux; \
         aarch64|arm64) GITLEAKS_ARCH="arm64" ;; \
         *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
     esac; \
-    TAG="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name)"; \
+    TAG="${GITLEAKS_VERSION}"; \
     curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${TAG}/gitleaks_${TAG#v}_linux_${GITLEAKS_ARCH}.tar.gz" -o /tmp/gitleaks.tgz; \
     tar -xzf /tmp/gitleaks.tgz -C /tmp; \
     install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks; \
@@ -147,14 +154,25 @@ RUN set -eux; \
 
 RUN apt-get update && apt-get install -y zaproxy
 
-RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+RUN curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
 
 RUN apt-get install -y wapiti
+
+# Build-time self-check: verify the pinned Group 1 tools are present and report
+# the expected versions. This fails the build early if a download or install broke.
+RUN set -eux; \
+    gitleaks version | grep -F "${GITLEAKS_VERSION}"; \
+    trufflehog --version | grep -F "${TRUFFLEHOG_VERSION#v}"; \
+    trivy --version | grep -F "${TRIVY_VERSION#v}"; \
+    ruff --version | grep -F "${RUFF_VERSION}"; \
+    pytest --version | grep -F "${PYTEST_VERSION}"
 
 USER pentester
 
 RUN pipx install semgrep && \
-    pipx install bandit
+    pipx install bandit && \
+    pipx install "ruff==${RUFF_VERSION}" && \
+    pipx install "pytest==${PYTEST_VERSION}"
 
 RUN npm install -g jshint
 
