@@ -43,7 +43,7 @@ def _make_http_error(status: int, location: str | None = None) -> HTTPError:
         url="http://example.com",
         code=status,
         msg="redirect",
-        hdrs=headers,
+        hdrs=headers,  # type: ignore[arg-type]
         fp=io.BytesIO(b""),
     )
 

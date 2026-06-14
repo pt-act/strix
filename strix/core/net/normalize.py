@@ -55,7 +55,7 @@ def normalize_url(url: str) -> str:
     if parsed.query:
         pairs = []
         for key, value in sorted(
-            (part.split("=", 1) if "=" in part else (part, ""))
+            tuple(part.split("=", 1)) if "=" in part else (part, "")
             for part in parsed.query.split("&")
             if part
         ):

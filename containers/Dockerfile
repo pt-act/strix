@@ -45,7 +45,36 @@ RUN apt-get update && \
 
 RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
 
+# Pinned Group 1 toolchain + build-time self-check (fail-fast layer).
+# Installed early so a bad pin aborts the build before the heavy Go/nuclei steps.
 USER pentester
+ENV PATH="/home/pentester/.local/bin:$PATH"
+RUN pipx install "ruff==${RUFF_VERSION}" && \
+    pipx install "pytest==${PYTEST_VERSION}"
+
+USER root
+RUN curl -sSfL "https://raw.githubusercontent.com/trufflesecurity/trufflehog/${TRUFFLEHOG_VERSION}/scripts/install.sh" | sh -s -- -b /usr/local/bin "${TRUFFLEHOG_VERSION}"
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    case "$ARCH" in \
+        x86_64) GITLEAKS_ARCH="x64" ;; \
+        aarch64|arm64) GITLEAKS_ARCH="arm64" ;; \
+        *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_${GITLEAKS_ARCH}.tar.gz" -o /tmp/gitleaks.tgz; \
+    tar -xzf /tmp/gitleaks.tgz -C /tmp; \
+    install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks; \
+    rm -f /tmp/gitleaks /tmp/gitleaks.tgz
+RUN curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+
+USER pentester
+RUN set -eux; \
+    gitleaks version 2>&1 | grep -F "${GITLEAKS_VERSION#v}"; \
+    trufflehog --version 2>&1 | grep -F "${TRUFFLEHOG_VERSION#v}"; \
+    trivy --version 2>&1 | grep -F "${TRIVY_VERSION#v}"; \
+    ruff --version 2>&1 | grep -F "${RUFF_VERSION}"; \
+    pytest --version 2>&1 | grep -F "${PYTEST_VERSION}"
+
 RUN openssl ecparam -name prime256v1 -genkey -noout -out /app/certs/ca.key && \
     openssl req -x509 -new -key /app/certs/ca.key \
     -out /app/certs/ca.crt \
@@ -138,41 +167,12 @@ RUN git clone https://github.com/aravind0x7/JS-Snooper.git && \
 
 USER root
 
-RUN curl -sSfL "https://raw.githubusercontent.com/trufflesecurity/trufflehog/${TRUFFLEHOG_VERSION}/scripts/install.sh" | sh -s -- -b /usr/local/bin "${TRUFFLEHOG_VERSION}"
-RUN set -eux; \
-    ARCH="$(uname -m)"; \
-    case "$ARCH" in \
-        x86_64) GITLEAKS_ARCH="x64" ;; \
-        aarch64|arm64) GITLEAKS_ARCH="arm64" ;; \
-        *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
-    esac; \
-    TAG="${GITLEAKS_VERSION}"; \
-    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${TAG}/gitleaks_${TAG#v}_linux_${GITLEAKS_ARCH}.tar.gz" -o /tmp/gitleaks.tgz; \
-    tar -xzf /tmp/gitleaks.tgz -C /tmp; \
-    install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks; \
-    rm -f /tmp/gitleaks /tmp/gitleaks.tgz
-
-RUN apt-get update && apt-get install -y zaproxy
-
-RUN curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
-
-RUN apt-get install -y wapiti
-
-# Build-time self-check: verify the pinned Group 1 tools are present and report
-# the expected versions. This fails the build early if a download or install broke.
-RUN set -eux; \
-    gitleaks version | grep -F "${GITLEAKS_VERSION}"; \
-    trufflehog --version | grep -F "${TRUFFLEHOG_VERSION#v}"; \
-    trivy --version | grep -F "${TRIVY_VERSION#v}"; \
-    ruff --version | grep -F "${RUFF_VERSION}"; \
-    pytest --version | grep -F "${PYTEST_VERSION}"
+RUN apt-get update && apt-get install -y zaproxy wapiti
 
 USER pentester
 
 RUN pipx install semgrep && \
-    pipx install bandit && \
-    pipx install "ruff==${RUFF_VERSION}" && \
-    pipx install "pytest==${PYTEST_VERSION}"
+    pipx install bandit
 
 RUN npm install -g jshint
 
