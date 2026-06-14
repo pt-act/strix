@@ -131,6 +131,43 @@ class TestDiffEngineTier2PBT(TestCase):
         actual_pairs = {d.pair for d in result.deltas}
         self.assertEqual(actual_pairs, expected_pairs)
 
+    def test_seeded_bfla_user_gains_access_to_admin_endpoint(self) -> None:
+        responses = [
+            {
+                "label": "anonymous",
+                "response": {"status_code": 403, "headers": {}, "body": "denied"},
+            },
+            {
+                "label": "user",
+                "response": {"status_code": 403, "headers": {}, "body": "denied"},
+            },
+            {
+                "label": "admin",
+                "response": {"status_code": 200, "headers": {}, "body": "admin data"},
+            },
+        ]
+        result = diff(responses)
+        bfla = {c.pair for c in result.candidates if c.kind == "BFLA"}
+        self.assertIn(("anonymous", "admin"), bfla)
+        self.assertIn(("user", "admin"), bfla)
+
+    def test_seeded_expired_authorized(self) -> None:
+        responses = [
+            {
+                "label": "user",
+                "response": {"status_code": 401, "headers": {}, "body": "unauthorized"},
+            },
+            {
+                "label": "expired",
+                "response": {"status_code": 200, "headers": {}, "body": "still authorized"},
+            },
+        ]
+        result = diff(responses)
+        expired = [c for c in result.candidates if c.kind == "expired_authorized"]
+        self.assertTrue(expired)
+        self.assertEqual(expired[0].pair, ("expired", "user"))
+        self.assertEqual(expired[0].evidence_class, "diff")
+
     @given(
         owner=st.sampled_from(["user", "admin"]),
         intruder=st.sampled_from(["user", "admin"]),
