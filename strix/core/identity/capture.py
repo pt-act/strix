@@ -45,6 +45,22 @@ def _extract_cookies(cookie_header: str) -> dict[str, str]:
     return cookies
 
 
+def _pop_case_insensitive(
+    headers: dict[str, str],
+    target: str,
+) -> tuple[str | None, dict[str, str]]:
+    """Remove the header matching ``target`` case-insensitively and return it."""
+    target_lower = target.lower()
+    remaining: dict[str, str] = {}
+    value: str | None = None
+    for name, val in headers.items():
+        if name.lower() == target_lower:
+            value = val
+        else:
+            remaining[name] = val
+    return value, remaining
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -72,15 +88,16 @@ def capture_from_proxy(
     auth_headers = _extract_auth_headers(headers)
     cookie_header = headers.get("Cookie") or headers.get("cookie")
     cookies = _extract_cookies(cookie_header or "")
+    authorization, remaining_headers = _pop_case_insensitive(auth_headers, "authorization")
     tokens: dict[str, str] = {}
-    if "authorization" in auth_headers:
-        tokens["authorization"] = auth_headers.pop("authorization")
+    if authorization is not None:
+        tokens["authorization"] = authorization
     return Identity(
         target_key=target_key,
         role=role,
         cookies=cookies,
         tokens=tokens,
-        headers=auth_headers,
+        headers=remaining_headers,
         provenance="proxy_capture",
         freshness=Freshness(captured_at=_now(), status="fresh"),
     )
@@ -105,16 +122,17 @@ def capture_from_login(
     """
     cookies = dict(response_cookies or {})
     headers = _extract_auth_headers(response_headers)
+    authorization, remaining_headers = _pop_case_insensitive(headers, "authorization")
     tokens: dict[str, str] = {}
-    if "authorization" in headers:
-        tokens["authorization"] = headers.pop("authorization")
+    if authorization is not None:
+        tokens["authorization"] = authorization
     _ = response_body  # reserved for future token extraction from JSON
     return Identity(
         target_key=target_key,
         role=role,
         cookies=cookies,
         tokens=tokens,
-        headers=headers,
+        headers=remaining_headers,
         provenance="login_flow",
         freshness=Freshness(captured_at=_now(), status="fresh"),
     )
