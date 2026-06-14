@@ -62,7 +62,8 @@ def normalize_url(url: str) -> str:
             pairs.append(f"{key}={value}")
         query = "&".join(pairs)
 
-    netloc = host
+    # IPv6 addresses must stay bracketed so urlunparse produces a valid URL.
+    netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc = f"{netloc}:{port}"
 
