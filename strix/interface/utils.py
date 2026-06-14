@@ -21,6 +21,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.core.paths import validate_run_name
 
 
 def get_severity_color(severity: str) -> str:
@@ -1259,7 +1260,8 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
     if git_executable is None:
         raise FileNotFoundError("Git executable not found in PATH")
 
-    temp_dir = Path(tempfile.gettempdir()) / "strix_repos" / run_name
+    validated_run_name = validate_run_name(run_name)
+    temp_dir = Path(tempfile.gettempdir()) / "strix_repos" / validated_run_name
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     if dest_name:
@@ -1278,6 +1280,7 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
                 [
                     git_executable,
                     "clone",
+                    "--",
                     repo_url,
                     str(clone_path),
                 ],

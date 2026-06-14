@@ -460,8 +460,12 @@ Examples:
                 "Cannot combine --resume with --target. --resume picks up where "
                 "the prior run left off, including the original target list."
             )
+        try:
+            resume_run_dir = run_dir_for(args.resume)
+        except ValueError as exc:
+            parser.error(f"--resume {args.resume}: invalid run name: {exc}")
         _load_resume_state(args, parser)
-        agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
+        agents_path = runtime_state_dir(resume_run_dir) / "agents.json"
         if not agents_path.exists():
             parser.error(
                 f"--resume {args.resume}: missing {agents_path}. The run was "
@@ -520,7 +524,10 @@ def _persist_run_record(args: argparse.Namespace) -> None:
 
 def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Populate ``args.targets_info`` and friends from a prior run's run.json."""
-    run_dir = run_dir_for(args.resume)
+    try:
+        run_dir = run_dir_for(args.resume)
+    except ValueError as exc:
+        parser.error(f"--resume {args.resume}: invalid run name: {exc}")
     state_path = run_dir / "run.json"
     if not state_path.exists():
         parser.error(
