@@ -30,17 +30,17 @@ logger = logging.getLogger(__name__)
 
 def _run_dir_from_ctx(ctx: RunContextWrapper) -> Path:
     """Return the run directory from the agent context."""
-    context = getattr(ctx, "context", None)
+    context = cast("dict[str, Any] | None", getattr(ctx, "context", None))
     if isinstance(context, dict):
         run_dir = context.get("run_dir")
-        if run_dir:
-            return Path(run_dir)
+        if run_dir is not None:
+            return Path(cast("str | Path", run_dir))
     raise RuntimeError("Tool context is missing 'run_dir'")
 
 
 async def _oob_provider(ctx: RunContextWrapper, run_dir: Path) -> OobProvider:
     """Return the OOB provider from context, or fall back to a local spawn."""
-    context = getattr(ctx, "context", None)
+    context = cast("dict[str, Any] | None", getattr(ctx, "context", None))
     if isinstance(context, dict):
         provider = context.get("oob_provider")
         if provider is not None:
