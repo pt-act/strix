@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -42,13 +43,17 @@ class TestInterfaceUtilsImportHygiene:
 
     def test_check_docker_connection_lazily_imports_docker(self) -> None:
         """check_docker_connection must import docker only when called."""
+        from docker.errors import DockerException
+
         from strix.interface import utils as interface_utils
 
         # docker is not imported at module load time.
         assert "docker" not in getattr(interface_utils, "__dict__", {})
-        # The function is still callable; with no daemon it will raise RuntimeError,
-        # but the important point is that it attempts the import inside the function.
-        with pytest.raises(RuntimeError, match="Docker not available"):
+        # The function is still callable; force a deterministic failure so
+        # the test does not depend on whether a Docker daemon is running.
+        with patch(
+            "docker.from_env", side_effect=DockerException("mock")
+        ), pytest.raises(RuntimeError, match="Docker not available"):
             interface_utils.check_docker_connection()
 
     def test_net_package_imports_without_docker(self) -> None:
