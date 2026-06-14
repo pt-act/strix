@@ -7,17 +7,23 @@ raw callback data is attached to reports via the report layer, not exposed here.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunContextWrapper, function_tool
 
 from strix.core.oob.correlator import Correlator
 from strix.core.oob.registry import TokenRegistry
 from strix.core.paths import oob_registry_path
-from strix.runtime.oob.provider import OobProvider
+from strix.runtime.oob.provider import InteractshProvider
+
+
+if TYPE_CHECKING:
+    from strix.runtime.oob.provider import OobProvider
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +44,30 @@ async def _oob_provider(ctx: RunContextWrapper, run_dir: Path) -> OobProvider:
     if isinstance(context, dict):
         provider = context.get("oob_provider")
         if provider is not None:
-            return provider
+            return cast("OobProvider", provider)
 
     # Fallback: spawn a local interactsh-client. This is useful for standalone
     # invocations but is not the preferred production path (container sidecar).
-    from strix.runtime.oob.provider import InteractshProvider
-
     provider = InteractshProvider(no_spawn=False)
     await provider.start(run_dir)
     return provider
+
+
+def _to_tool_json(value: Any) -> Any:
+    """Recursively convert dataclasses/Pydantic objects to tool JSON values."""
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {str(k): _to_tool_json(v) for k, v in dataclasses.asdict(value).items()}
+    if isinstance(value, dict):
+        return {str(k): _to_tool_json(v) for k, v in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_to_tool_json(v) for v in value]
+    return str(value)
 
 
 def _dump_json(obj: Any) -> str:
@@ -118,7 +139,7 @@ async def poll_oob_callbacks(
             {
                 "success": True,
                 "hits": len(hits),
-                "records": [record.model_dump() for record in records],
+                "records": [_to_tool_json(record) for record in records],
             },
         )
     finally:
@@ -161,7 +182,7 @@ async def confirm_oob_callback(
                     {
                         "success": True,
                         "verdict": "confirmed",
-                        "record": record.model_dump(),
+                        "record": _to_tool_json(record),
                     },
                 )
 
