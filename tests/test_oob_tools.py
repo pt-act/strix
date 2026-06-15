@@ -11,6 +11,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -71,7 +72,11 @@ sys.modules["agents"] = _agents
 sys.modules["agents.usage"] = _agents_usage
 
 from strix.core.oob.models import OobHit  # noqa: E402
-from strix.report.state import ReportState, set_global_report_state  # noqa: E402
+from strix.report.state import (  # noqa: E402
+    ReportState,
+    get_global_report_state,
+    set_global_report_state,
+)
 from strix.tools.oob.tools import (  # noqa: E402
     confirm_oob_callback,
     mint_oob_token,
@@ -81,7 +86,9 @@ from strix.tools.oob.tools import (  # noqa: E402
 
 
 # Mock the dedupe module so the report layer does not invoke LLM-based
-# deduplication during unit tests.
+# deduplication during unit tests. We patch sys.modules per test because the
+# real module imports from agents.models and is not available in the offline
+# test environment.
 _dedupe: Any = ModuleType("strix.report.dedupe")
 
 
@@ -90,7 +97,6 @@ async def _check_duplicate(_candidate: Any, _existing: Any) -> dict[str, Any]:
 
 
 _dedupe.check_duplicate = _check_duplicate
-sys.modules["strix.report.dedupe"] = _dedupe
 
 
 _ID_ALPHABET = st.characters(whitelist_categories=("L", "N"))
@@ -270,10 +276,22 @@ class TestOobPromotionPBT(TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.run_dir = Path(self.tmp.name) / "run"
+        self.previous_state = get_global_report_state()
         self.report_state = ReportState(run_name=self.run_dir.name)
+        self.report_state._run_dir = self.run_dir
         set_global_report_state(self.report_state)
+        self._dedupe_patcher = patch.dict(sys.modules, {"strix.report.dedupe": _dedupe})
+        self._dedupe_patcher.start()
+        self._state_patcher = patch(
+            "strix.report.state.get_global_report_state",
+            return_value=self.report_state,
+        )
+        self._state_patcher.start()
 
     def tearDown(self) -> None:
+        self._state_patcher.stop()
+        self._dedupe_patcher.stop()
+        set_global_report_state(self.previous_state)
         self.tmp.cleanup()
 
     async def _promote_with_hit(
@@ -282,6 +300,7 @@ class TestOobPromotionPBT(TestCase):
         candidate_id: str,
         source_ip: str,
     ) -> dict[str, Any]:
+        set_global_report_state(self.report_state)
         provider = _FakeOobProvider()
         ctx = _ctx(self.run_dir, provider)
         mint_result = await mint_oob_token(ctx, engagement_id, candidate_id, "req-1")
@@ -335,6 +354,7 @@ class TestOobPromotionPBT(TestCase):
         engagement_id: str,
         candidate_id: str,
     ) -> dict[str, Any]:
+        set_global_report_state(self.report_state)
         provider = _FakeOobProvider()
         ctx = _ctx(self.run_dir, provider)
         await mint_oob_token(ctx, engagement_id, candidate_id, "req-1")
@@ -371,18 +391,32 @@ class TestOobEndToEnd(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.run_dir = Path(self.tmp.name) / "run"
+        self.previous_state = get_global_report_state()
         self.report_state = ReportState(run_name=self.run_dir.name)
+        self.report_state._run_dir = self.run_dir
         set_global_report_state(self.report_state)
+        self._dedupe_patcher = patch.dict(sys.modules, {"strix.report.dedupe": _dedupe})
+        self._dedupe_patcher.start()
+        self._state_patcher = patch(
+            "strix.report.state.get_global_report_state",
+            return_value=self.report_state,
+        )
+        self._state_patcher.start()
 
     def tearDown(self) -> None:
+        self._state_patcher.stop()
+        self._dedupe_patcher.stop()
+        set_global_report_state(self.previous_state)
         self.tmp.cleanup()
 
     async def _mint(self, provider: _FakeOobProvider, candidate_id: str) -> str:
+        set_global_report_state(self.report_state)
         ctx = _ctx(self.run_dir, provider)
         mint_result = await mint_oob_token(ctx, "eng-e2e", candidate_id, "req-e2e")
         return json.loads(mint_result)["token"]
 
     async def _promote(self, provider: _FakeOobProvider, candidate_id: str) -> dict[str, Any]:
+        set_global_report_state(self.report_state)
         ctx = _ctx(self.run_dir, provider)
         result = await report_oob_confirmed_candidate(
             ctx, "eng-e2e", candidate_id, **_report_fields()

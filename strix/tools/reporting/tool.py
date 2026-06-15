@@ -286,7 +286,15 @@ async def _do_create(  # noqa: PLR0912
         logger.exception("create_vulnerability_report persistence failed")
         return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
     else:
-        persisted_report = report_state.vulnerability_reports[-1]
+        persisted_report = next(
+            (r for r in report_state.vulnerability_reports if r.get("id") == report_id),
+            None,
+        )
+        if persisted_report is None:
+            return {
+                "success": False,
+                "error": "Report was created but could not be retrieved from state",
+            }
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
             report_id,
