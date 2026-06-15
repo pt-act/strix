@@ -100,12 +100,13 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 
 USER pentester
 WORKDIR /tmp
-
+ARG INTERACTSH_CLIENT_VERSION=v1.2.4
 RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
     go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
-    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@${INTERACTSH_CLIENT_VERSION} && \
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-server@${INTERACTSH_CLIENT_VERSION}
 
 RUN nuclei -update-templates
 

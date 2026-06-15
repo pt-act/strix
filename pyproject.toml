@@ -216,6 +216,7 @@ ignore = [
 "strix/tools/thinking/tool.py" = ["TC002"]
 "strix/tools/web_search/tool.py" = ["TC002"]
 "strix/tools/proxy/tools.py" = ["TC002", "PLR0911"]
+"strix/tools/oob/tools.py" = ["TC002", "PLR0911"]
 "strix/tools/agents_graph/tools.py" = ["TC002"]
 "strix/agents/factory.py" = ["TC002"]
 # Entry point: ``Path`` is used at runtime by the typing of the
