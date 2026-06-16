@@ -132,6 +132,27 @@ class TestDiffEngineTier2PBT(TestCase):
         self.assertEqual(actual_pairs, expected_pairs)
 
     def test_seeded_bfla_user_gains_access_to_admin_endpoint(self) -> None:
+        # The lower-priv role succeeds while admin is denied — true BFLA.
+        responses = [
+            {
+                "label": "anonymous",
+                "response": {"status_code": 403, "headers": {}, "body": "denied"},
+            },
+            {
+                "label": "user",
+                "response": {"status_code": 200, "headers": {}, "body": "admin data"},
+            },
+            {
+                "label": "admin",
+                "response": {"status_code": 403, "headers": {}, "body": "denied"},
+            },
+        ]
+        result = diff(responses)
+        bfla = {c.pair for c in result.candidates if c.kind == "BFLA"}
+        self.assertIn(("user", "admin"), bfla)
+
+    def test_correctly_gated_admin_endpoint_not_bfla(self) -> None:
+        # Admin succeeds and lower roles are denied: no BFLA (negative direction).
         responses = [
             {
                 "label": "anonymous",
@@ -147,9 +168,8 @@ class TestDiffEngineTier2PBT(TestCase):
             },
         ]
         result = diff(responses)
-        bfla = {c.pair for c in result.candidates if c.kind == "BFLA"}
-        self.assertIn(("anonymous", "admin"), bfla)
-        self.assertIn(("user", "admin"), bfla)
+        bfla = [c for c in result.candidates if c.kind == "BFLA"]
+        self.assertEqual(bfla, [])
 
     def test_seeded_expired_authorized(self) -> None:
         responses = [
@@ -167,6 +187,22 @@ class TestDiffEngineTier2PBT(TestCase):
         self.assertTrue(expired)
         self.assertEqual(expired[0].pair, ("expired", "user"))
         self.assertEqual(expired[0].evidence_class, "diff")
+
+    def test_expired_denied_is_not_authorized(self) -> None:
+        # A properly expired session is denied just like the valid user: no candidate.
+        responses = [
+            {
+                "label": "user",
+                "response": {"status_code": 401, "headers": {}, "body": "unauthorized"},
+            },
+            {
+                "label": "expired",
+                "response": {"status_code": 401, "headers": {}, "body": "unauthorized"},
+            },
+        ]
+        result = diff(responses)
+        expired = [c for c in result.candidates if c.kind == "expired_authorized"]
+        self.assertEqual(expired, [])
 
     @given(
         owner=st.sampled_from(["user", "admin"]),

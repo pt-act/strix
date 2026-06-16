@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 import tempfile
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -220,8 +221,11 @@ class TestOobTools(IsolatedAsyncioTestCase):
 
         result = await poll_oob_callbacks(ctx, "eng1", limit=2)
         payload = json.loads(result)
-        self.assertEqual(payload["hits"], 2)
+        self.assertEqual(payload["hits"], 3)
         self.assertEqual(len(payload["records"]), 2)
+        # The newest two hits are returned.
+        returned_ips = {r["hit"]["source_ip"] for r in payload["records"]}
+        self.assertEqual(returned_ips, {"1.2.3.1", "1.2.3.2"})
 
     async def test_confirm_oob_callback_confirms_matching_hit(self) -> None:
         provider = _FakeOobProvider()
@@ -273,51 +277,75 @@ class TestOobTools(IsolatedAsyncioTestCase):
 class TestOobPromotionPBT(TestCase):
     """Property-based invariants for the OOB promotion gate."""
 
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.run_dir = Path(self.tmp.name) / "run"
-        self.previous_state = get_global_report_state()
-        self.report_state = ReportState(run_name=self.run_dir.name)
-        self.report_state._run_dir = self.run_dir
-        set_global_report_state(self.report_state)
-        self._dedupe_patcher = patch.dict(sys.modules, {"strix.report.dedupe": _dedupe})
-        self._dedupe_patcher.start()
-        self._state_patcher = patch(
+    def _fresh_state(self) -> tuple[Path, ReportState, Any, Any]:
+        run_dir = Path(self.tmp.name) / "runs" / str(uuid.uuid4())
+        run_dir.mkdir(parents=True)
+        report_state = ReportState(run_name=run_dir.name)
+        report_state._run_dir = run_dir
+        set_global_report_state(report_state)
+        dedupe_patcher = patch.dict(sys.modules, {"strix.report.dedupe": _dedupe})
+        dedupe_patcher.start()
+        state_patcher = patch(
             "strix.report.state.get_global_report_state",
-            return_value=self.report_state,
+            return_value=report_state,
         )
-        self._state_patcher.start()
-
-    def tearDown(self) -> None:
-        self._state_patcher.stop()
-        self._dedupe_patcher.stop()
-        set_global_report_state(self.previous_state)
-        self.tmp.cleanup()
+        state_patcher.start()
+        return run_dir, report_state, dedupe_patcher, state_patcher
 
     async def _promote_with_hit(
         self,
         engagement_id: str,
         candidate_id: str,
         source_ip: str,
-    ) -> dict[str, Any]:
-        set_global_report_state(self.report_state)
-        provider = _FakeOobProvider()
-        ctx = _ctx(self.run_dir, provider)
-        mint_result = await mint_oob_token(ctx, engagement_id, candidate_id, "req-1")
-        token = json.loads(mint_result)["token"]
-        provider.add_hit(
-            OobHit(
-                protocol="dns",
-                token=token,
-                full_fqdn=f"{token}.abc123.oast.pro",
-                source_ip=source_ip,
-                timestamp=datetime.now(UTC),
+    ) -> tuple[dict[str, Any], ReportState]:
+        run_dir, report_state, dedupe_patcher, state_patcher = self._fresh_state()
+        try:
+            provider = _FakeOobProvider()
+            ctx = _ctx(run_dir, provider)
+            mint_result = await mint_oob_token(ctx, engagement_id, candidate_id, "req-1")
+            token = json.loads(mint_result)["token"]
+            provider.add_hit(
+                OobHit(
+                    protocol="dns",
+                    token=token,
+                    full_fqdn=f"{token}.abc123.oast.pro",
+                    source_ip=source_ip,
+                    timestamp=datetime.now(UTC),
+                )
             )
-        )
-        result = await report_oob_confirmed_candidate(
-            ctx, engagement_id, candidate_id, **_report_fields()
-        )
-        return json.loads(result)
+            result = await report_oob_confirmed_candidate(
+                ctx, engagement_id, candidate_id, **_report_fields()
+            )
+            return json.loads(result), report_state
+        finally:
+            state_patcher.stop()
+            dedupe_patcher.stop()
+
+    async def _promote_without_hit(
+        self,
+        engagement_id: str,
+        candidate_id: str,
+    ) -> tuple[dict[str, Any], ReportState]:
+        run_dir, report_state, dedupe_patcher, state_patcher = self._fresh_state()
+        try:
+            provider = _FakeOobProvider()
+            ctx = _ctx(run_dir, provider)
+            await mint_oob_token(ctx, engagement_id, candidate_id, "req-1")
+            result = await report_oob_confirmed_candidate(
+                ctx, engagement_id, candidate_id, **_report_fields()
+            )
+            return json.loads(result), report_state
+        finally:
+            state_patcher.stop()
+            dedupe_patcher.stop()
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.previous_state = get_global_report_state()
+
+    def tearDown(self) -> None:
+        set_global_report_state(self.previous_state)
+        self.tmp.cleanup()
 
     @settings(max_examples=50, deadline=None)
     @given(
@@ -332,7 +360,9 @@ class TestOobPromotionPBT(TestCase):
         source_ip: str,
     ) -> None:
         """Invariant 2: every promoted candidate has a correlated callback."""
-        payload = asyncio.run(self._promote_with_hit(engagement_id, candidate_id, source_ip))
+        payload, report_state = asyncio.run(
+            self._promote_with_hit(engagement_id, candidate_id, source_ip)
+        )
         self.assertEqual(payload["verdict"], "confirmed")
         self.assertIn("report", payload)
         self.assertEqual(payload["report"]["evidence_class"], "callback")
@@ -340,7 +370,7 @@ class TestOobPromotionPBT(TestCase):
 
         report_id = payload["report"]["report_id"]
         persisted = next(
-            (r for r in self.report_state.vulnerability_reports if r["id"] == report_id),
+            (r for r in report_state.vulnerability_reports if r["id"] == report_id),
             None,
         )
         self.assertIsNotNone(persisted)
@@ -348,20 +378,6 @@ class TestOobPromotionPBT(TestCase):
         self.assertEqual(persisted["evidence_class"], "callback")
         artifacts = persisted.get("artifacts", [])
         self.assertTrue(any(a.get("artifact_type") == "oob_callback" for a in artifacts))
-
-    async def _promote_without_hit(
-        self,
-        engagement_id: str,
-        candidate_id: str,
-    ) -> dict[str, Any]:
-        set_global_report_state(self.report_state)
-        provider = _FakeOobProvider()
-        ctx = _ctx(self.run_dir, provider)
-        await mint_oob_token(ctx, engagement_id, candidate_id, "req-1")
-        result = await report_oob_confirmed_candidate(
-            ctx, engagement_id, candidate_id, **_report_fields()
-        )
-        return json.loads(result)
 
     @settings(max_examples=50, deadline=None)
     @given(
@@ -374,13 +390,11 @@ class TestOobPromotionPBT(TestCase):
         candidate_id: str,
     ) -> None:
         """Invariant 3: no callback in window → candidate is not reported confirmed."""
-        payload = asyncio.run(self._promote_without_hit(engagement_id, candidate_id))
+        payload, report_state = asyncio.run(self._promote_without_hit(engagement_id, candidate_id))
         self.assertEqual(payload["verdict"], "unconfirmed")
         self.assertNotIn("report", payload)
         reports = [
-            r
-            for r in self.report_state.vulnerability_reports
-            if r.get("evidence_class") == "callback"
+            r for r in report_state.vulnerability_reports if r.get("evidence_class") == "callback"
         ]
         self.assertEqual(reports, [])
 
@@ -498,6 +512,34 @@ class TestOobEndToEnd(IsolatedAsyncioTestCase):
             if r.get("evidence_class") == "callback"
         ]
         self.assertEqual(callback_reports, [])
+
+    async def test_double_promote_dedups_to_one_report(self) -> None:
+        provider = _FakeOobProvider()
+        token = await self._mint(provider, "dedup-candidate")
+        provider.add_hit(
+            OobHit(
+                protocol="dns",
+                token=token,
+                full_fqdn=f"{token}.abc123.oast.pro",
+                source_ip="1.2.3.4",
+                timestamp=datetime.now(UTC),
+            )
+        )
+
+        first = await self._promote(provider, "dedup-candidate")
+        self.assertEqual(first["verdict"], "confirmed")
+        self.assertIn("report", first)
+
+        second = await self._promote(provider, "dedup-candidate")
+        self.assertEqual(second["verdict"], "confirmed")
+        self.assertNotIn("report", second)
+
+        callback_reports = [
+            r
+            for r in self.report_state.vulnerability_reports
+            if r.get("evidence_class") == "callback"
+        ]
+        self.assertEqual(len(callback_reports), 1)
 
 
 if __name__ == "__main__":

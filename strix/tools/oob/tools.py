@@ -145,9 +145,11 @@ async def poll_oob_callbacks(
     registry = TokenRegistry(oob_registry_path(run_dir))
     try:
         hits = await provider.poll_interactions()
-        hits = hits[:limit]
         correlator = Correlator(registry)
-        records = [correlator.correlate(hit, engagement_id) for hit in hits]
+        for hit in hits:
+            registry.record_hit(hit)
+        # Return the newest interactions up to the requested limit.
+        records = [correlator.correlate(hit, engagement_id) for hit in hits[-limit:]]
         return _dump_json(
             {
                 "success": True,
@@ -187,6 +189,7 @@ async def confirm_oob_callback(
         hits = await provider.poll_interactions()
         correlator = Correlator(registry)
         for hit in hits:
+            registry.record_hit(hit)
             if hit.token != mint.token:
                 continue
             record = correlator.correlate(hit, engagement_id)
@@ -251,10 +254,18 @@ async def _promote_oob_candidate(
     hits = await provider.poll_interactions()
     correlator = Correlator(registry)
     for hit in hits:
+        hit_id = registry.record_hit(hit)
         if hit.token != mint.token:
             continue
         record = correlator.correlate(hit, engagement_id)
         if record.status == "confirmed":
+            # Dedup guard: one report per candidate per engagement.
+            if not registry.record_promotion(engagement_id, candidate_id, hit_id, hit.token):
+                return {
+                    "success": True,
+                    "verdict": "confirmed",
+                    "reason": "candidate already promoted",
+                }
             artifact: dict[str, Any] = {
                 "artifact_type": "oob_callback",
                 "mime_type": "application/json",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import subprocess  # nosec B404
 from pathlib import Path
@@ -29,6 +30,7 @@ class ScannerTimeoutError(ScannerRunnerError):
 
 
 _SUPPORTED_TOOLS: set[str] = {"gitleaks", "trufflehog", "trivy"}
+_SHELL_METACHARS = re.compile(r"[;&|`$<>\n\r]")
 
 
 def _which(tool: str) -> str:
@@ -56,9 +58,21 @@ def _get_version(tool: str) -> str:
     return output.splitlines()[0].strip()
 
 
+def _validate_extra_args(extra_args: list[str] | None) -> list[str]:
+    """Validate extra CLI arguments to prevent shell-injection via the tool."""
+    if extra_args is None:
+        return []
+    for arg in extra_args:
+        if not arg:
+            raise ScannerRunnerError("extra_args must be non-empty strings")
+        if _SHELL_METACHARS.search(arg):
+            raise ScannerRunnerError(f"Unsafe character in extra_args: {arg!r}")
+    return extra_args
+
+
 def _run_scanner(tool: str, target: str, extra_args: list[str] | None) -> tuple[str, int]:
     """Execute the scanner and return merged stdout/stderr plus return code."""
-    cmd = [tool, *(extra_args or []), target]
+    cmd = [tool, *_validate_extra_args(extra_args), target]
     try:
         result = subprocess.run(  # noqa: S603  # nosec B603
             cmd,
@@ -209,6 +223,7 @@ def run_scanner(
         raise ScannerNotFoundError(
             f"Unsupported scanner: {tool}. Supported: {sorted(_SUPPORTED_TOOLS)}"
         )
+    _validate_extra_args(extra_args)
     _which(tool)
     version = _get_version(tool)
     raw_output, returncode = _run_scanner(tool, target, extra_args)

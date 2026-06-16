@@ -7,6 +7,7 @@ or self-hosted OOB server.
 from __future__ import annotations
 
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -115,6 +116,55 @@ class TestInteractshProviderTier1(IsolatedAsyncioTestCase):
         await provider.start(self.run_dir)
         self.assertTrue(provider.ready())
         self.assertEqual(provider.base_host(), "abcdef123456.oast.pro")
+
+    async def test_parse_interactions_uses_payload_timestamp(self) -> None:
+        provider = InteractshProvider()
+        await self._start_with_fake_process(provider)
+
+        past = datetime.now(UTC)
+        log_path = self.run_dir / "interactsh.log"
+        log_path.write_text(
+            f'{{"full-id":"tok1.abc123.oast.pro","protocol":"dns","remote-address":"1.2.3.4","timestamp":"{past.isoformat()}"}}\n'
+        )
+
+        hits = await provider.poll_interactions()
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].timestamp, past)
+
+    async def test_late_parsed_within_window_callback_is_confirmed(self) -> None:
+        # A callback that arrives within the window but is parsed late must not be
+        # marked expired just because it was parsed after the window elapsed.
+        provider = InteractshProvider()
+        await self._start_with_fake_process(provider)
+
+        from strix.core.oob.registry import TokenRegistry
+        from strix.core.paths import oob_registry_path
+
+        registry = TokenRegistry(oob_registry_path(self.run_dir))
+        try:
+            mint = registry.mint(
+                "eng-1",
+                "cand-1",
+                "req-1",
+                base_host=provider.base_host(),
+                provider_ready=provider.ready(),
+                window_seconds=300,
+            )
+            callback_time = mint.created_at
+            log_path = self.run_dir / "interactsh.log"
+            log_path.write_text(
+                f'{{"full-id":"{mint.token}.abc123.oast.pro","protocol":"dns","remote-address":"1.2.3.4","timestamp":"{callback_time.isoformat()}"}}\n'
+            )
+
+            hits = await provider.poll_interactions()
+            self.assertEqual(len(hits), 1)
+            from strix.core.oob.correlator import Correlator
+
+            correlator = Correlator(registry)
+            record = correlator.correlate(hits[0], "eng-1")
+            self.assertEqual(record.status, "confirmed")
+        finally:
+            registry.close()
 
 
 if __name__ == "__main__":

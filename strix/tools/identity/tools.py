@@ -18,6 +18,7 @@ from strix.core.diff import diff
 from strix.core.identity import IdentityStore, redact_identity
 from strix.core.identity.capture import capture_from_login, capture_from_proxy
 from strix.core.identity.models import Freshness, Identity
+from strix.core.identity.redaction import redact_headers, redact_request_components
 from strix.core.identity.replay import LADDER_ROLES, replay_ladder
 from strix.core.identity.store import identity_store_path
 from strix.core.paths import run_dir_for
@@ -114,16 +115,26 @@ def _make_ladder_identity(target_key: str, role: str) -> Identity:
 
 def _redacted_http_exchange(ladder_result: dict[str, Any]) -> dict[str, Any]:
     """Return a redacted view of every replay result in the ladder."""
-    rows = [
-        {
-            "identity": cell.get("identity"),
-            "success": cell.get("success"),
-            "status": cell.get("status"),
-            "error": cell.get("error"),
-            "response": cell.get("response"),
-        }
-        for cell in ladder_result.get("results", [])
-    ]
+    rows = []
+    for cell in ladder_result.get("results", []):
+        response = cell.get("response") or {}
+        headers = response.get("headers") or {}
+        body = response.get("body", "")
+        rows.append(
+            {
+                "identity": cell.get("identity"),
+                "success": cell.get("success"),
+                "status": response.get("status_code") or cell.get("status"),
+                "error": cell.get("error"),
+                "response": {
+                    "status_code": response.get("status_code"),
+                    "headers": redact_headers(headers) if isinstance(headers, dict) else headers,
+                    "body": redact_request_components("", "", {}, str(body)).get("body")
+                    if any(token in str(body).lower() for token in ("password", "secret", "token"))
+                    else body,
+                },
+            }
+        )
     return {"replay_results": rows}
 
 

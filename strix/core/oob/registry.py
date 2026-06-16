@@ -54,6 +54,18 @@ class TokenRegistry:
         )
     """
 
+    _PROMOTION_TABLE = """
+        CREATE TABLE IF NOT EXISTS promotions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            engagement_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            hit_id INTEGER NOT NULL,
+            token TEXT NOT NULL,
+            promoted_at TEXT NOT NULL,
+            UNIQUE(engagement_id, candidate_id)
+        )
+    """
+
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
@@ -65,6 +77,7 @@ class TokenRegistry:
         with self._cursor() as cur:
             cur.execute(self._MINT_TABLE)
             cur.execute(self._HIT_TABLE)
+            cur.execute(self._PROMOTION_TABLE)
             self._conn.commit()
 
     @contextmanager
@@ -96,8 +109,8 @@ class TokenRegistry:
         if not provider_ready:
             raise RuntimeError("OOB provider is not ready; mint rejected")
 
-        token = secrets.token_urlsafe(24)
-        injectable_host = f"{token}.{base_host}"
+        token = secrets.token_hex(16)
+        injectable_host = f"{token}.{base_host.lower()}"
         record = MintRecord(
             token=token,
             engagement_id=engagement_id,
@@ -126,8 +139,9 @@ class TokenRegistry:
 
     def lookup(self, token: str) -> MintRecord | None:
         """Return the mint record for a token, or ``None`` if unminted."""
+        normalized = token.lower()
         with self._cursor() as cur:
-            row = cur.execute("SELECT * FROM mints WHERE token = ?", (token,)).fetchone()
+            row = cur.execute("SELECT * FROM mints WHERE token = ?", (normalized,)).fetchone()
         if row is None:
             return None
         return self._row_to_mint(row)
@@ -188,6 +202,42 @@ class TokenRegistry:
             row_id = cur.lastrowid
         logger.debug("Recorded hit for token %s", hit.token)
         return row_id or 0
+
+    def record_promotion(
+        self,
+        engagement_id: str,
+        candidate_id: str,
+        hit_id: int,
+        token: str,
+    ) -> bool:
+        """Persist that a candidate has been promoted to a finding.
+
+        Returns ``True`` when this is the first promotion for the candidate,
+        ``False`` if the candidate has already been promoted (dedup guard).
+        """
+        with self._cursor() as cur:
+            existing = cur.execute(
+                "SELECT 1 FROM promotions WHERE engagement_id = ? AND candidate_id = ?",
+                (engagement_id, candidate_id),
+            ).fetchone()
+            if existing is not None:
+                return False
+            cur.execute(
+                "INSERT INTO promotions (engagement_id, candidate_id, hit_id, token, promoted_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (engagement_id, candidate_id, hit_id, token, datetime.now(UTC).isoformat()),
+            )
+            self._conn.commit()
+        return True
+
+    def is_promoted(self, engagement_id: str, candidate_id: str) -> bool:
+        """Return whether a candidate has already been promoted to a finding."""
+        with self._cursor() as cur:
+            row = cur.execute(
+                "SELECT 1 FROM promotions WHERE engagement_id = ? AND candidate_id = ?",
+                (engagement_id, candidate_id),
+            ).fetchone()
+        return row is not None
 
     def _row_to_mint(self, row: sqlite3.Row) -> MintRecord:
         return MintRecord(
