@@ -86,6 +86,38 @@ def _is_success(response: NormalizedResponse) -> bool:
     return response.status_class == "2xx"
 
 
+def _is_denied(response: NormalizedResponse) -> bool:
+    return response.status_class in {"4xx", "5xx"}
+
+
+def _is_expired_authorized(
+    delta: SemanticDelta,
+    responses: dict[str, NormalizedResponse],
+) -> bool:
+    a, b = delta.pair
+    if "expired" not in (a, b):
+        return False
+    expired_label = a if a == "expired" else b
+    other = b if a == "expired" else a
+    return _is_success(responses[expired_label]) and _is_denied(responses[other])
+
+
+def _is_bfla(
+    delta: SemanticDelta,
+    responses: dict[str, NormalizedResponse],
+) -> bool:
+    a, b = delta.pair
+    rank_a = _role_rank(a)
+    rank_b = _role_rank(b)
+    lower, higher = (a, b) if rank_a < rank_b else (b, a)
+    return (
+        higher == "admin"
+        and lower in {"user", "anonymous"}
+        and _is_success(responses[lower])
+        and _is_denied(responses[higher])
+    )
+
+
 def _flag_candidates(
     deltas: list[SemanticDelta],
     responses: dict[str, NormalizedResponse],
@@ -93,41 +125,44 @@ def _flag_candidates(
     """Flag IDOR / BFLA / expired_authorized candidates from deltas."""
     candidates: list[Candidate] = []
 
-    # Expired authorization: expired gained access vs any baseline.
+    # Expired authorization: the expired identity itself succeeds (2xx) while a
+    # valid identity is denied. That is the violation, not the other way around.
     for delta in deltas:
+        if not _is_expired_authorized(delta, responses):
+            continue
         a, b = delta.pair
-        if "expired" in (a, b) and delta.auth_signal_delta == "gained_access":
-            other = b if a == "expired" else a
-            candidates.append(
-                Candidate(
-                    kind="expired_authorized",
-                    pair=("expired", other),
-                    rationale=(
-                        f"Expired session was authorized by the server while "
-                        f"{other} was denied or the expired identity gained access."
-                    ),
-                    evidence_class="diff",
-                )
+        other = b if a == "expired" else a
+        candidates.append(
+            Candidate(
+                kind="expired_authorized",
+                pair=("expired", other),
+                rationale=(
+                    "Expired session received a successful response while "
+                    f"{other} was denied, indicating stale authorization is still accepted."
+                ),
+                evidence_class="diff",
             )
+        )
 
-    # BFLA: lower-priv role gained access to an admin-gated function.
+    # BFLA: a lower-priv role succeeds at an admin-gated function while admin is denied.
+    # The violation is the lower identity accessing the endpoint, not the admin gaining access.
     for delta in deltas:
+        if not _is_bfla(delta, responses):
+            continue
         a, b = delta.pair
         rank_a = _role_rank(a)
         rank_b = _role_rank(b)
         lower, higher = (a, b) if rank_a < rank_b else (b, a)
-        is_gained = delta.auth_signal_delta == "gained_access"
-        if higher == "admin" and lower in {"user", "anonymous"} and is_gained:
-            candidates.append(
-                Candidate(
-                    kind="BFLA",
-                    pair=(lower, higher),
-                    rationale=(
-                        f"{lower} gained access to an admin-gated endpoint relative to {higher}."
-                    ),
-                    evidence_class="diff",
-                )
+        candidates.append(
+            Candidate(
+                kind="BFLA",
+                pair=(lower, higher),
+                rationale=(
+                    f"{lower} succeeded at an admin-gated endpoint while {higher} was denied."
+                ),
+                evidence_class="diff",
             )
+        )
 
     # IDOR: two different non-anonymous identities both succeed with the same body.
     for delta in deltas:

@@ -148,6 +148,81 @@ class TestTokenRegistryTier2PBT(TestCase):
         finally:
             registry.close()
 
+    def test_record_hit_persists_and_correlates_to_engagement(self) -> None:
+        from strix.core.oob.models import OobHit
+
+        registry = TokenRegistry(self.db_path)
+        try:
+            mint = registry.mint(
+                "eng-1",
+                "candidate-A",
+                "req-1",
+                base_host="oast.pro",
+                provider_ready=True,
+            )
+            hit = OobHit(
+                protocol="dns",
+                token=mint.token,
+                full_fqdn=mint.injectable_host,
+                source_ip="1.2.3.4",
+                timestamp=mint.created_at,
+                raw_request=None,
+                metadata={"foo": "bar"},
+            )
+            hit_id = registry.record_hit(hit)
+            self.assertGreater(hit_id, 0)
+            hits = registry.list_hits("eng-1")
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0].token, mint.token)
+        finally:
+            registry.close()
+
+    def test_record_promotion_dedups_per_candidate(self) -> None:
+        registry = TokenRegistry(self.db_path)
+        try:
+            self.assertTrue(registry.record_promotion("eng-1", "candidate-A", 1, "tok1"))
+            self.assertFalse(registry.record_promotion("eng-1", "candidate-A", 2, "tok2"))
+            self.assertTrue(registry.record_promotion("eng-1", "candidate-B", 3, "tok3"))
+            self.assertTrue(registry.record_promotion("eng-2", "candidate-A", 4, "tok4"))
+        finally:
+            registry.close()
+
+    def test_token_is_dns_safe_and_lowercase(self) -> None:
+        registry = TokenRegistry(self.db_path)
+        try:
+            mint = registry.mint(
+                "eng-1",
+                "candidate-A",
+                "req-1",
+                base_host="oast.pro",
+                provider_ready=True,
+            )
+            self.assertTrue(mint.token.islower())
+            self.assertNotIn("_", mint.token)
+            self.assertNotIn("/", mint.token)
+            self.assertTrue(all(c.isalnum() or c == "." for c in mint.injectable_host))
+            self.assertRegex(mint.injectable_host, r"^[a-f0-9]{32}\.oast\.pro$")
+        finally:
+            registry.close()
+
+    def test_lookup_is_case_insensitive(self) -> None:
+        registry = TokenRegistry(self.db_path)
+        try:
+            mint = registry.mint(
+                "eng-1",
+                "candidate-A",
+                "req-1",
+                base_host="oast.pro",
+                provider_ready=True,
+            )
+            upper = mint.token.upper()
+            looked_up = registry.lookup(upper)
+            self.assertIsNotNone(looked_up)
+            assert looked_up is not None
+            self.assertEqual(looked_up.token, mint.token)
+        finally:
+            registry.close()
+
 
 if __name__ == "__main__":
     import unittest

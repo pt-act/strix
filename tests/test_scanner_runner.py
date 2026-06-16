@@ -4,14 +4,41 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+
+# Mock the agents SDK before importing the scanner_runner tool so the
+# function_tool decorator is a no-op and RunContextWrapper is available.
+_agents: Any = ModuleType("agents")
+
+
+class _RunContextWrapper:
+    def __init__(self, context: dict[str, Any] | None = None) -> None:
+        self.context = context or {}
+
+
+def _function_tool(*, timeout: int = 60, strict_mode: bool = False) -> Any:
+    _ = timeout, strict_mode
+
+    def decorator(func: Any) -> Any:
+        return func
+
+    return decorator
+
+
+_agents.RunContextWrapper = _RunContextWrapper
+_agents.function_tool = _function_tool
+sys.modules["agents"] = _agents
+
 from strix.tools.scanner_runner.tool import (
     ScannerNotFoundError,
+    ScannerRunnerError,
     ScannerTimeoutError,
     _parse_findings,
     run_scanner,
@@ -163,6 +190,12 @@ def test_run_scanner_trivy_success() -> None:
 def test_parse_findings_empty_for_unknown_tool() -> None:
     """Unknown tools return an empty finding list without crashing."""
     assert _parse_findings("unknown", "some output") == []
+
+
+def test_run_scanner_rejects_injected_extra_args() -> None:
+    """Shell metacharacters in extra_args are rejected."""
+    with pytest.raises(ScannerRunnerError, match="Unsafe character"):
+        run_scanner("gitleaks", ".", extra_args=["--config", "file; rm -rf /"])
 
 
 def _fake_completed(stdout: str, returncode: int) -> SimpleNamespace:

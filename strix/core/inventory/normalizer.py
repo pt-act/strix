@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote_plus, urlparse, urlunparse
 
 from strix.core.inventory.models import Endpoint, EndpointObservation, Param
 
@@ -45,11 +45,18 @@ def _normalize_path(path: str) -> tuple[str, list[str]]:
 
 
 def _normalize_query(query: str) -> tuple[str, list[str]]:
-    """Sort query keys and rebuild query string."""
+    """Sort query keys and rebuild query string.
+
+    Valueless query parameters (e.g. ``?foo``) are preserved without an ``=``.
+    """
     if not query:
         return "", []
     pairs = sorted(parse_qsl(query, keep_blank_values=True), key=lambda p: p[0])
-    return urlencode(pairs), ["query_sorted"]
+    encoded = "&".join(
+        f"{quote_plus(name)}={quote_plus(value)}" if value else quote_plus(name)
+        for name, value in pairs
+    )
+    return encoded, ["query_sorted"]
 
 
 def _canonical_url(raw_url: str) -> tuple[str, str, list[str]]:
@@ -110,7 +117,7 @@ def normalize_observation(obs: EndpointObservation) -> Endpoint:
 
     # Also surface query keys from the normalized URL itself.
     parsed = urlparse(canonical_url)
-    for name, _ in parse_qsl(parsed.query):
+    for name, _ in parse_qsl(parsed.query, keep_blank_values=True):
         if name and name not in params:
             params[name] = Param(
                 name=name,

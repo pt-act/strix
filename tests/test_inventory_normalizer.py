@@ -73,6 +73,16 @@ class TestNormalizer(unittest.TestCase):
             "GET https://api.example.com/users",
         )
 
+    def test_valueless_query_param_kept_without_equals(self) -> None:
+        obs = EndpointObservation(
+            method="GET",
+            raw_url="https://example.com/search?debug&foo=1",
+            source="sitemap",
+        )
+        endpoint = normalize_observation(obs)
+        self.assertEqual(endpoint.url, "https://example.com/search?debug&foo=1")
+        self.assertIn("debug", endpoint.params)
+
 
 class TestDedup(unittest.TestCase):
     """Merge behavior and idempotence."""

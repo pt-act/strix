@@ -240,6 +240,95 @@ class TestIdentityToolsTier1(IsolatedAsyncioTestCase):
             self.assertIn("semantic_delta", artifact_types)
             self.assertIn("http_exchange", artifact_types)
 
+    async def test_auth_matrix_redacts_credentials_in_http_exchange_artifact(self) -> None:
+        # Seed the store so the ladder has two identities that produce the same response.
+        ctx = _FakeContext(self.run_dir)
+        await _upsert(
+            ctx,
+            "example.com",
+            "user",
+            "proxy",
+            method="GET",
+            url="https://example.com/api/users",
+            headers={"Authorization": "Bearer user-token"},
+        )
+        await _upsert(
+            ctx,
+            "example.com",
+            "admin",
+            "proxy",
+            method="GET",
+            url="https://example.com/api/users",
+            headers={"Authorization": "Bearer admin-token"},
+        )
+
+        fake_ladder = {
+            "results": [
+                {
+                    "identity": "user",
+                    "success": True,
+                    "status": "DONE",
+                    "error": None,
+                    "response": {
+                        "status_code": 200,
+                        "headers": {
+                            "Authorization": "Bearer SECRET_TOKEN",
+                            "Cookie": "session=SECRET_SESSION",
+                            "Content-Type": "application/json",
+                        },
+                        "body": b'{"token":"SECRET_BODY_TOKEN"}',
+                    },
+                },
+                {
+                    "identity": "admin",
+                    "success": True,
+                    "status": "DONE",
+                    "error": None,
+                    "response": {
+                        "status_code": 200,
+                        "headers": {
+                            "Authorization": "Bearer SECRET_TOKEN",
+                            "Cookie": "session=SECRET_SESSION",
+                            "Content-Type": "application/json",
+                        },
+                        "body": b'{"token":"SECRET_BODY_TOKEN"}',
+                    },
+                },
+            ]
+        }
+
+        with patch("strix.tools.identity.tools.replay_ladder", return_value=fake_ladder):
+            result = await _run_auth_matrix("req-1", "example.com", self.run_dir)
+
+        self.assertTrue(result["success"])
+        self.assertGreater(result["finding_count"], 0)
+        report_state = get_global_report_state()
+        assert report_state is not None
+        report = next(
+            (r for r in report_state.vulnerability_reports if r.get("evidence_class") == "diff"),
+            None,
+        )
+        self.assertIsNotNone(report)
+        assert report is not None
+        artifact = next(
+            (a for a in report["artifacts"] if a["artifact_type"] == "http_exchange"),
+            None,
+        )
+        self.assertIsNotNone(artifact)
+        assert artifact is not None
+        replay_results = artifact["data"]["replay_results"]
+        self.assertEqual(len(replay_results), 2)
+        for row in replay_results:
+            redacted_response = row["response"]
+            self.assertEqual(redacted_response["headers"]["Authorization"], "****")
+            self.assertEqual(redacted_response["headers"]["Cookie"], "****")
+            self.assertEqual(redacted_response["headers"]["Content-Type"], "application/json")
+            self.assertNotIn("SECRET_TOKEN", str(redacted_response))
+            self.assertNotIn("SECRET_SESSION", str(redacted_response))
+            self.assertNotIn("SECRET_BODY_TOKEN", str(redacted_response))
+        self.assertNotIn("SECRET_TOKEN", str(artifact))
+        self.assertNotIn("SECRET_SESSION", str(artifact))
+
     async def test_auth_matrix_empty_diff_no_findings(self) -> None:
         ctx = _FakeContext(self.run_dir)
         await _upsert(

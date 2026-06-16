@@ -95,6 +95,7 @@ class InteractshProvider(OobProvider):
         self._ready = False
         self._run_dir: Path | None = None
         self._log_path: Path | None = None
+        self._last_poll_line_count: int = 0
 
     @property
     def config(self) -> OobConfig:
@@ -131,8 +132,8 @@ class InteractshProvider(OobProvider):
 
     async def _wait_for_hostname(self, stdout: asyncio.StreamReader) -> str:
         """Block until the client prints its generated hostname."""
-        deadline = asyncio.get_event_loop().time() + self._STARTUP_TIMEOUT
-        while asyncio.get_event_loop().time() < deadline:
+        deadline = asyncio.get_running_loop().time() + self._STARTUP_TIMEOUT
+        while asyncio.get_running_loop().time() < deadline:
             try:
                 line = await asyncio.wait_for(stdout.readline(), timeout=2.0)
             except TimeoutError:
@@ -150,8 +151,8 @@ class InteractshProvider(OobProvider):
 
     async def _wait_for_hostname_in_log(self) -> str:
         """Wait for the log file to contain a hostname line."""
-        deadline = asyncio.get_event_loop().time() + self._STARTUP_TIMEOUT
-        while asyncio.get_event_loop().time() < deadline:
+        deadline = asyncio.get_running_loop().time() + self._STARTUP_TIMEOUT
+        while asyncio.get_running_loop().time() < deadline:
             if self._log_path is not None and self._log_path.exists():
                 text = self._log_path.read_text(encoding="utf-8", errors="replace")
                 for line in text.splitlines():
@@ -186,7 +187,10 @@ class InteractshProvider(OobProvider):
         return self._base_host
 
     async def poll_interactions(self) -> list[OobHit]:
-        """Poll the interactsh-client log file for new interactions."""
+        """Poll the interactsh-client log file for new interactions.
+
+        Only returns interactions that have not been returned by a previous poll.
+        """
         if not self.ready():
             return []
 
@@ -194,8 +198,12 @@ class InteractshProvider(OobProvider):
             return []
 
         text = self._log_path.read_text(encoding="utf-8", errors="replace")
+        lines = text.strip().splitlines()
+        new_lines = lines[self._last_poll_line_count :]
+        self._last_poll_line_count = len(lines)
+
         hits: list[OobHit] = []
-        for line in text.strip().splitlines():
+        for line in new_lines:
             hit = self._parse_json_line(line)
             if hit is not None:
                 hits.append(hit)
@@ -213,19 +221,34 @@ class InteractshProvider(OobProvider):
 
         token = self._extract_token(full_fqdn)
         protocol = self._normalize_protocol(data.get("protocol", "dns"))
+        timestamp = self._parse_timestamp(data.get("timestamp"))
         return OobHit(
             protocol=protocol,  # type: ignore[arg-type]
             token=token,
             full_fqdn=full_fqdn,
             source_ip=data.get("remote-address", "0.0.0.0"),  # nosec B104
-            timestamp=datetime.now(UTC),
+            timestamp=timestamp,
             raw_request=(data.get("raw-request") or "").encode("utf-8") or None,
             metadata={"interactsh_protocol": protocol, "interactsh_data": data},
         )
 
+    def _parse_timestamp(self, value: Any) -> datetime:
+        """Return the timestamp from the payload, or now if it is missing/unparseable."""
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value, tz=UTC)
+            except (ValueError, OSError, OverflowError):
+                pass
+        return datetime.now(UTC)
+
     def _extract_token(self, full_fqdn: str) -> str:
         match = self._TOKEN_FROM_HOST_RE.match(full_fqdn)
-        return match.group(1) if match else ""
+        return match.group(1).lower() if match else ""
 
     @staticmethod
     def _normalize_protocol(value: Any) -> str:
