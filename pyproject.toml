@@ -227,6 +227,11 @@ ignore = [
 # session_manager call; importing under TYPE_CHECKING would defer
 # resolution past where mypy needs it.
 "strix/core/runner.py" = ["TC003", "PLR0912", "PLR0915", "PLC0415"]
+# Race-harness tests need to install mocks before importing the modules under
+# test, so lazy imports and non-top-level imports are intentional.
+"tests/test_race_harness.py" = ["E402", "PLC0415", "TC001"]
+"tests/test_race_tool.py" = ["E402", "PLC0415", "TC001"]
+"tests/test_race_verdict.py" = ["TC001"]
 # ReportState carries scan artifact/report fields and
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401"]
@@ -332,7 +337,156 @@ reportUnknownArgumentType = false
 reportPrivateUsage = false
 
 [[tool.pyright.executionEnvironments]]
+root = "strix/tools/inventory"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/tools/race/tools.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/harness.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/dispatch.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/models.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/__init__.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/collector.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/aggregator.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/precondition.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/race/verdict.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_race_verdict.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_race_harness.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_race_tool.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
 root = "strix/agents/factory.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/report/state.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+reportImportCycles = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/tools/inventory/tools.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_inventory_parser_reachability.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
 reportUnknownArgumentType = false
@@ -356,20 +510,7 @@ reportUnknownArgumentType = false
 reportPrivateUsage = false
 reportUnknownLambdaType = false
 reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/inventory/tools.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-
-[[tool.pyright.executionEnvironments]]
-root = "tests/test_inventory_parser_reachability.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
+reportAttributeAccessIssue = false
 
 [[tool.pyright.executionEnvironments]]
 root = "tests/test_inventory_spray.py"
@@ -636,226 +777,6 @@ reportPrivateUsage = false
 reportAttributeAccessIssue = false
 reportCallIssue = false
 reportArgumentType = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/reporting/tool.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportUnnecessaryIsInstance = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/scanner_runner/tool.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/todo/tools.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-# Pre-existing pyright noise in modules that consume untyped external SDK / JSON data.
-# These overrides are scoped to the affected files and do not cover the new correctness-pass
-# modules (core/diff, core/oob/registry, runtime/oob/provider) which remain clean.
-[[tool.pyright.executionEnvironments]]
-root = "strix/agents/prompt.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportUnknownLambdaType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/config"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/agents.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/execution.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/hooks.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportUnnecessaryIsInstance = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/identity"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/inputs.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/net"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/oob"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/runner.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/core/sessions.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/interface"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportUnknownLambdaType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-reportDeprecated = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/report"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-reportUnnecessaryIsInstance = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/runtime/docker_client.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/telemetry"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/agents_graph/tools.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/finish/tool.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/identity/tools.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/notes/tools.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/oob/tools.py"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-
-[[tool.pyright.executionEnvironments]]
-root = "strix/tools/proxy"
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportPrivateUsage = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
 
 [[tool.pyright.executionEnvironments]]
 root = "strix/tools/reporting/tool.py"

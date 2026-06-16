@@ -17,6 +17,7 @@ class TestImpactGate:
             ("diff", "high", "kept_from_cvss"),
             ("callback", "high", "kept_from_cvss"),
             ("reachability", "high", "kept_from_cvss"),
+            ("race_result", "high", "kept_from_cvss"),
         ],
     )
     def test_apply_impact_gate(

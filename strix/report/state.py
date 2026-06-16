@@ -25,8 +25,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EvidenceClass = Literal["diff", "callback", "reachability", "none"]
-_VALID_EVIDENCE_CLASSES: frozenset[str] = frozenset({"diff", "callback", "reachability", "none"})
+EvidenceClass = Literal["diff", "callback", "reachability", "race_result", "none"]
+_VALID_EVIDENCE_CLASSES: frozenset[str] = frozenset(
+    {"diff", "callback", "reachability", "race_result", "none"}
+)
 
 
 def _apply_impact_gate(
