@@ -171,6 +171,7 @@ async def _do_create(  # noqa: PLR0912
     agent_name: str | None = None,
     evidence_class: str = "none",
     artifacts: list[dict[str, Any]] | None = None,
+    proposal_id: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     fields = {
@@ -281,6 +282,7 @@ async def _do_create(  # noqa: PLR0912
             agent_name=agent_name if isinstance(agent_name, str) else None,
             evidence_class=evidence_class,  # type: ignore[arg-type]
             artifacts=artifacts,
+            proposal_id=proposal_id,
         )
     except (ImportError, AttributeError) as e:
         logger.exception("create_vulnerability_report persistence failed")
@@ -333,6 +335,7 @@ async def create_vulnerability_report(
     code_locations: list[dict[str, Any]] | None = None,
     evidence_class: str = "none",
     artifacts: list[dict[str, Any]] | None = None,
+    proposal_id: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -507,6 +510,11 @@ async def create_vulnerability_report(
             ``"none"`` down-grades the reported severity to
             ``info``/unconfirmed; the finding stays visible and the
             original CVSS severity is recorded on the report.
+        proposal_id: Optional id returned by
+            ``propose_vulnerability_investigation``. Pass it to link this
+            confirmed finding back to its proposal in the funnel (glass-box).
+            Omit it and the funnel best-effort-matches by endpoint; this never
+            affects the report itself or the impact gate.
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}
     raw_agent_id = inner.get("agent_id")
@@ -538,5 +546,6 @@ async def create_vulnerability_report(
         agent_name=agent_name,
         evidence_class=evidence_class,
         artifacts=artifacts,
+        proposal_id=proposal_id,
     )
     return json.dumps(result, ensure_ascii=False, default=str)

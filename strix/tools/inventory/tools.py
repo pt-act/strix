@@ -24,6 +24,13 @@ from strix.core.inventory import (
     spray_values_for_param,
 )
 from strix.core.inventory.parsers.reachability import annotate_reachability
+from strix.core.proposals import (
+    C1C8Answer,
+    C1C8Checklist,
+    InterventionFlags,
+    assemble_proposal_context,
+)
+from strix.report.state import get_global_report_state
 
 
 if TYPE_CHECKING:
@@ -264,6 +271,130 @@ async def enrich_inventory_from_forms(
             "extracted_params": len(extracted),
             "path": str(path),
         },
+    )
+
+
+def _build_c1c8_checklist(answers: list[dict[str, str]] | None) -> C1C8Checklist | None:
+    """Turn a list of answer dicts into a C1C8 checklist.
+
+    Each answer dict may contain ``question_id`` (e.g. C3/C5/C6/C7),
+    ``answer`` (yes/no/unknown/na), and an optional ``rationale``.
+    """
+    if not answers:
+        return None
+    questions = {q.split()[0].rstrip(":"): q for q in C1C8Checklist.default_questions()}
+    checklist = C1C8Checklist()
+    for answer in answers:
+        question_id = answer.get("question_id", "")
+        if question_id not in questions:
+            continue
+        checklist.answers.append(
+            C1C8Answer(
+                question_id=question_id,
+                question=questions[question_id],
+                answer=answer.get("answer", "unknown"),  # type: ignore[arg-type]
+                rationale=answer.get("rationale"),
+            )
+        )
+    return checklist
+
+
+@function_tool(timeout=60)
+async def propose_vulnerability_investigation(
+    ctx: RunContextWrapper,
+    target_id: str,
+    endpoint_key: str,
+    param_name: str | None = None,
+    cwe: str | None = None,
+    control_path: bool = False,
+    knowledge_path: bool = False,
+    c1_c8_checklist: bool = False,
+    c1_c8_answers: list[dict[str, str]] | None = None,
+    harnesses_selected: list[str] | None = None,
+) -> str:
+    """Assemble proposal-time context and record the proposal in the funnel.
+
+    This tool is proposal-stage only. It does not run any harness and does
+    not set ``evidence_class``. It records the active intervention flags and
+    the supplied context so the downstream disposer can later attach its
+    verdict to the same proposal record.
+
+    C1-C8 self-interrogation questions (pass ``question_id`` in answers):
+
+    - C3: does the endpoint rely on another component or downstream service
+      to enforce a security check?
+    - C5: does the bug require a specific prior state or multi-step sequence?
+    - C6: can a race condition or TOCTOU alter the outcome?
+    - C7: does a parameter cross a trust boundary?
+
+    Args:
+        target_id: Target identifier used to load the ranked surface map.
+        endpoint_key: Key of the endpoint to propose investigating.
+        param_name: Optional parameter name to focus on.
+        cwe: CWE the agent suspects (e.g. CWE-639).
+        control_path: Enable Control-Path verbalization.
+        knowledge_path: Enable Knowledge-Path CWE priors.
+        c1_c8_checklist: Enable the C1-C8 self-interrogation checklist.
+        c1_c8_answers: Agent answers to the enabled checklist questions.
+        harnesses_selected: Harnesses the agent intends to run.
+    """
+    run_dir = _run_dir_from_ctx(ctx)
+    ranked = load_ranked_map(run_dir, target_id)
+    endpoint = ranked.endpoints.get(endpoint_key)
+    if endpoint is None:
+        return _dump_json({"success": False, "error": f"Endpoint not found: {endpoint_key!r}"})
+
+    param = endpoint.params.get(param_name) if param_name else None
+
+    flags = InterventionFlags(
+        control_path=control_path,
+        knowledge_path=knowledge_path,
+        c1_c8_checklist=c1_c8_checklist,
+    )
+    checklist: C1C8Checklist | None = None
+    if c1_c8_checklist:
+        checklist = _build_c1c8_checklist(c1_c8_answers) or C1C8Checklist()
+
+    context = assemble_proposal_context(endpoint, param, flags, checklist)
+
+    c1_c8_answers_dict: dict[str, C1C8Answer] = {}
+    if checklist is not None:
+        c1_c8_answers_dict = {a.question_id: a for a in checklist.answers}
+
+    report_state = get_global_report_state()
+    proposal_id: str | None = None
+    if report_state is not None:
+        record = report_state.funnel_log.start_proposal(
+            engagement_id=target_id,
+            endpoint_key=endpoint_key,
+            param_name=param_name,
+            cwe=cwe,
+            c1_c8_answers=c1_c8_answers_dict,
+            active_interventions=flags,
+            harnesses_selected=list(harnesses_selected or []),
+            supplied_context=context,
+        )
+        proposal_id = record.proposal_id
+        report_state.save_run_data()
+
+    return _dump_json(
+        {
+            "success": True,
+            "proposal_id": proposal_id,
+            "endpoint_key": endpoint_key,
+            "param_name": param_name,
+            "cwe": cwe,
+            "active_flags": context.active_flags.model_dump(),
+            "control_path_nl": context.control_path_nl,
+            "knowledge_path_nl": context.knowledge_path_nl,
+            "c1_c8_checklist": checklist.model_dump() if checklist else None,
+            "c1_c8_questions": C1C8Checklist.default_questions() if c1_c8_checklist else None,
+            "warning": (
+                "Proposal context returned but not recorded: no global report state available."
+                if report_state is None
+                else None
+            ),
+        }
     )
 
 

@@ -116,7 +116,11 @@ module = ["strix.tools.scanner_runner.tool"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["tests.test_inventory_tools", "tests.test_inventory_parser_reachability"]
+module = [
+    "tests.test_inventory_tools",
+    "tests.test_inventory_parser_reachability",
+    "tests.test_proposals_integration",
+]
 disable_error_code = ["operator"]
 
 # ============================================================================
@@ -689,6 +693,18 @@ reportPrivateUsage = false
 # modules (core/diff, core/oob/registry, runtime/oob/provider) which remain clean.
 [[tool.pyright.executionEnvironments]]
 root = "strix/core/logic"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportAttributeAccessIssue = false
+reportCallIssue = false
+reportUnusedFunction = false
+reportUnusedImport = false
+reportImportCycles = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/proposals"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
 reportUnknownArgumentType = false

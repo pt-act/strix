@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from strix.core.paths import run_dir_for
+from strix.report.proposals import FunnelLog
 from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
     read_run_record,
@@ -22,6 +23,8 @@ from strix.telemetry import posthog, scarf
 if TYPE_CHECKING:
     from agents.usage import Usage
 
+    from strix.core.proposals.models import ProposalRecord
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,15 @@ EvidenceClass = Literal["diff", "callback", "reachability", "race_result", "none
 _VALID_EVIDENCE_CLASSES: frozenset[str] = frozenset(
     {"diff", "callback", "reachability", "race_result", "none"}
 )
+
+# Maps a disposer (harness) evidence_class to the harness that produced it, used only
+# to label the funnel verdict. ``"none"`` carries no harness verdict and is omitted.
+_EVIDENCE_TO_HARNESS: dict[str, str] = {
+    "diff": "p2_diff_harness",
+    "callback": "p3_oob_harness",
+    "reachability": "p3_reachability",
+    "race_result": "p4_race_harness",
+}
 
 
 def _apply_impact_gate(
@@ -54,7 +66,7 @@ def get_global_report_state() -> ReportState | None:
     return _global_report_state
 
 
-def set_global_report_state(report_state: ReportState) -> None:
+def set_global_report_state(report_state: ReportState | None) -> None:
     global _global_report_state  # noqa: PLW0603
     _global_report_state = report_state
 
@@ -77,6 +89,7 @@ class ReportState:
 
         self.vulnerability_reports: list[dict[str, Any]] = []
         self.final_scan_result: str | None = None
+        self.funnel_log: FunnelLog = FunnelLog()
 
         self.scan_results: dict[str, Any] | None = None
         self.scan_config: dict[str, Any] | None = None
@@ -162,6 +175,17 @@ class ReportState:
                 len(self.vulnerability_reports),
             )
 
+        funnel_path = run_dir / "funnel.json"
+        if funnel_path.exists():
+            try:
+                self.funnel_log = FunnelLog.load(funnel_path)
+                logger.info(
+                    "report state hydrated %d funnel record(s)",
+                    len(self.funnel_log.list_records()),
+                )
+            except (OSError, RuntimeError) as exc:
+                logger.warning("failed to hydrate funnel log: %s", exc)
+
     def add_vulnerability_report(
         self,
         title: str,
@@ -184,6 +208,7 @@ class ReportState:
         agent_name: str | None = None,
         evidence_class: EvidenceClass = "none",
         artifacts: list[dict[str, Any]] | None = None,
+        proposal_id: str | None = None,
     ) -> str:
         if evidence_class not in _VALID_EVIDENCE_CLASSES:
             raise ValueError(
@@ -249,8 +274,73 @@ class ReportState:
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(report)
 
+        self._link_disposer_verdict_to_funnel(
+            report_id=report_id,
+            endpoint=endpoint,
+            evidence_class=evidence_class,
+            proposal_id=proposal_id,
+        )
+
         self.save_run_data()
         return report_id
+
+    def _link_disposer_verdict_to_funnel(
+        self,
+        *,
+        report_id: str,
+        endpoint: str | None,
+        evidence_class: EvidenceClass,
+        proposal_id: str | None,
+    ) -> None:
+        """Additively attach a disposer (harness) verdict onto its proposal record.
+
+        Glass-box instrumentation only: records the harness verdict + report id into the
+        matching ProposalRecord in the funnel. It never alters the report dict, the impact
+        gate, or ``vulnerability_reports``. Evidence-less (``"none"``) findings carry no
+        harness verdict and are skipped. If no proposal can be unambiguously matched, this
+        is a no-op — so engagements that never used the propose tool are unaffected.
+        """
+        harness_name = _EVIDENCE_TO_HARNESS.get(evidence_class)
+        if harness_name is None:
+            return  # "none" / unknown — no disposer verdict to attach.
+
+        record: ProposalRecord | None = None
+        if proposal_id is not None:
+            record = self.funnel_log.get(proposal_id)
+        if record is None:
+            record = self._match_open_proposal(endpoint)
+        if record is None:
+            return
+
+        self.funnel_log.record_harness_verdict(
+            record.proposal_id,
+            harness_name,
+            "confirmed",
+            evidence_class,
+        )
+        self.funnel_log.record_report(record.proposal_id, report_id)
+
+    def _match_open_proposal(self, endpoint: str | None) -> ProposalRecord | None:
+        """Best-effort: the single open (verdict-less, unreported) proposal for an endpoint.
+
+        Conservative by design — returns a record only on an unambiguous single match so a
+        harness-filed report is never linked to the wrong proposal. Explicit ``proposal_id``
+        is always preferred over this fallback.
+        """
+        if not endpoint:
+            return None
+        needle = endpoint.strip()
+        if not needle:
+            return None
+        matches = [
+            r
+            for r in self.funnel_log.list_records()
+            if not r.verdicts
+            and r.report_id is None
+            and r.endpoint_key
+            and (r.endpoint_key == needle or needle in r.endpoint_key or r.endpoint_key in needle)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)
@@ -372,6 +462,8 @@ class ReportState:
 
             if self.vulnerability_reports:
                 write_vulnerabilities(run_dir, self.vulnerability_reports, self._saved_vuln_ids)
+
+            self.funnel_log.save(run_dir / "funnel.json")
 
             write_run_record(run_dir, self.run_record)
 

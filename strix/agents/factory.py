@@ -34,6 +34,7 @@ from strix.tools.inventory.tools import (
     enrich_inventory_from_js,
     enrich_inventory_from_openapi,
     load_ranked_surface_map,
+    propose_vulnerability_investigation,
     spray_inventory_params,
 )
 from strix.tools.load_skill.tool import load_skill
@@ -382,6 +383,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     load_ranked_surface_map,
     classify_inventory_params,
     spray_inventory_params,
+    propose_vulnerability_investigation,
     enrich_inventory_from_openapi,
     enrich_inventory_from_js,
     enrich_inventory_from_forms,
