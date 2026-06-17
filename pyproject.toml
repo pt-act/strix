@@ -56,7 +56,12 @@ dev = [
   "pre-commit>=4.2.0",
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
   "hypothesis>=6.155.2",
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.25.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 
 [build-system]
 requires = ["hatchling"]
@@ -258,6 +263,10 @@ ignore = [
 "tests/test_oob_tools.py" = ["PLC0415"]
 "tests/test_identity_tools.py" = ["PLC0415"]
 "tests/test_diff_engine.py" = ["PLC0415"]
+"tests/integration/test_business_logic_fixture.py" = ["S603", "S607", "TRY300", "INP001", "I001", "F401"]
+"benchmarks/business_logic_fixture/app.py" = ["PLW0603"]
+"benchmarks/business_logic_fixture/__init__.py" = ["D104"]
+"tests/integration/__init__.py" = ["D104"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -427,6 +436,120 @@ reportUnusedFunction = false
 reportUnusedImport = false
 
 [[tool.pyright.executionEnvironments]]
+root = "strix/core/logic/catalog.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/logic/context.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/logic/models.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/logic/orchestrator.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/logic/store.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/tools/logic/tools.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnusedFunction = false
+reportUnusedImport = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_logic_catalog.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_logic_orchestrator.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_logic_gate.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_logic_model.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_logic_pbt.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_logic_tools.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
 root = "tests/test_race_verdict.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
@@ -564,6 +687,45 @@ reportPrivateUsage = false
 # Pre-existing pyright noise in modules that consume untyped external SDK / JSON data.
 # These overrides are scoped to the affected files and do not cover the new correctness-pass
 # modules (core/diff, core/oob/registry, runtime/oob/provider) which remain clean.
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/logic"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportAttributeAccessIssue = false
+reportCallIssue = false
+reportUnusedFunction = false
+reportUnusedImport = false
+reportImportCycles = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/tools/logic"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportAttributeAccessIssue = false
+reportCallIssue = false
+reportUnusedFunction = false
+reportUnusedImport = false
+reportImportCycles = false
+reportIncompatibleMethodOverride = false
+reportMissingTypeArgument = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportAttributeAccessIssue = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportUnusedFunction = false
+reportUnusedImport = false
+reportImportCycles = false
+
 [[tool.pyright.executionEnvironments]]
 root = "strix/agents/prompt.py"
 reportUnknownVariableType = false

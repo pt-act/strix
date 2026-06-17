@@ -55,3 +55,9 @@ def inventory_path(run_dir: Path, target_id: str) -> Path:
     """Return the durable per-target inventory store path."""
     safe_target_id = target_id.replace("/", "_").replace("\\", "_")
     return run_dir / RUNTIME_STATE_DIR_NAME / f"inventory_{safe_target_id}.json"
+
+
+def logic_model_path(run_dir: Path, engagement_id: str) -> Path:
+    """Return the durable per-engagement business-logic model store path."""
+    safe_engagement_id = engagement_id.replace("/", "_").replace("\\", "_")
+    return run_dir / RUNTIME_STATE_DIR_NAME / f"logic_model_{safe_engagement_id}.sqlite"

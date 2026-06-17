@@ -37,6 +37,13 @@ from strix.tools.inventory.tools import (
     spray_inventory_params,
 )
 from strix.tools.load_skill.tool import load_skill
+from strix.tools.logic.tools import (
+    list_flow_invariants,
+    propose_business_logic_model,
+    read_business_logic_model,
+    read_business_logic_violation_result,
+    run_business_logic_violation_test,
+)
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -380,6 +387,12 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     enrich_inventory_from_forms,
     # Phase 4 — race-condition harness
     run_race_harness,
+    # Phase 5 — business-logic state testing
+    propose_business_logic_model,
+    read_business_logic_model,
+    list_flow_invariants,
+    run_business_logic_violation_test,
+    read_business_logic_violation_result,
 )
 
 

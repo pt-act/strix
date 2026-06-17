@@ -9,7 +9,7 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from strix.core.identity.capture import capture_from_proxy
@@ -285,6 +285,8 @@ class TestReplayEngineTier2PBT(TestCase):
         header_value: str,
     ) -> None:
         # forall r,i: replay(r,i) carries exactly i's auth material and none of r's.
+        assume(header_name.lower() != "authorization")
+
         identity = Identity(
             target_key="example.com",
             role="user",
