@@ -3,7 +3,7 @@ NET_ADMIN/NET_RAW capabilities + host-gateway.
 
 The SDK's ``DockerSandboxClient._create_container`` does not expose a hook for
 extending ``create_kwargs`` before ``containers.create`` is called. We subclass
-and reimplement the method body verbatim from the SDK source, with three
+and reimplement the method body verbatim from the SDK source, with four
 deltas:
 
 1. Drop the SDK's ``entrypoint=["tail"]`` override; supply ``["tail", "-f",
@@ -12,9 +12,13 @@ deltas:
    starts inside the container and ``bootstrap_caido`` retries against a
    dead port.
 2. Append NET_ADMIN/NET_RAW to ``cap_add`` (required by ``nmap -sS`` and
-   other raw-socket tools).
+   other raw-socket tools, and required by the SGL egress enforcer for
+   iptables rule installation).
 3. Add ``host.docker.internal`` → host-gateway to ``extra_hosts`` so the
    agent can reach host-served apps.
+4. SGL-S0: inject STRIX_EGRESS_ENFORCE + STRIX_SCOPE_RULES into the
+   container environment when governance is active so the egress-enforcer
+   entrypoint and decision proxy load the correct engagement context.
 
 Pinned to ``openai-agents==0.14.6``. Bumping the SDK requires
 re-merging the parent body. Track upstream for an injection hook.
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import uuid
 from typing import Any
 
@@ -110,6 +115,32 @@ class StrixDockerSandboxClient(DockerSandboxClient):
 
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
         extra_hosts["host.docker.internal"] = "host-gateway"
+
+        # SGL-S0: inject governance environment when STRIX_EGRESS_ENFORCE is
+        # set on the host.  The egress-enforcer entrypoint reads these to
+        # activate iptables enforcement and load the scope rules into the
+        # decision proxy.  When not set, the container starts in dev/pass-
+        # through mode (existing behaviour preserved).
+        enforce = os.environ.get("STRIX_EGRESS_ENFORCE", "0")
+        if enforce == "1":
+            env: dict[str, str] = create_kwargs.get("environment") or {}
+            if not isinstance(env, dict):
+                env = dict(env)
+            env.setdefault("STRIX_EGRESS_ENFORCE", "1")
+            scope_rules = os.environ.get("STRIX_SCOPE_RULES", "")
+            env.setdefault("STRIX_SCOPE_RULES", scope_rules)
+            create_kwargs["environment"] = env
+            # Run the container's primary process (the prod entrypoint) as root
+            # so it can install the iptables enforcement rules.  This overrides
+            # the Dockerfile USER for the entrypoint ONLY — ``docker exec`` (used
+            # by the SDK to run agent tools) still defaults to the Dockerfile
+            # USER (pentester), which has no sudo in the prod image.  This is the
+            # separation that keeps the enforcer outside the agent's authority.
+            create_kwargs["user"] = "root"
+            logger.info(
+                "SGL egress enforcement active: %d scope rule(s) injected",
+                len([r for r in scope_rules.replace(",", "\n").splitlines() if r.strip()]),
+            )
 
         logger.debug(
             "Creating sandbox container: image=%s caps=%s exposed_ports=%s",

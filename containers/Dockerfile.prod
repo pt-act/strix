@@ -1,0 +1,99 @@
+# Dockerfile.prod — SGL-S0 production sandbox image
+#
+# Extends the existing Dockerfile (dev base) with the SGL egress-enforcement
+# substrate:
+#   1. A dedicated low-privilege user (strix-proxy) whose UID the iptables
+#      owner-match rule exempts from redirection — prevents loopback.
+#   2. iptables + nftables packages (already present in Kali; listed
+#      explicitly to pin and fail-fast if removed upstream).
+#   3. The egress-enforcer.sh script and the Python decision proxy installed
+#      under /usr/local/sbin/.
+#   4. The entrypoint delegates to egress-enforcer.sh when
+#      STRIX_EGRESS_ENFORCE=1; otherwise falls through (dev mode preserved).
+#
+# Build targets
+# -------------
+#   dev  (default) — fast iteration, no iptables enforcement.
+#   prod           — full enforcement substrate active.
+#
+# Usage
+#   docker build -f containers/Dockerfile.prod \
+#     --target prod -t strix-sandbox:prod .
+#
+# Required capabilities at runtime (see docker_client.py SGL delta)
+#   --cap-add NET_ADMIN   — iptables rule installation
+#   --cap-add NET_RAW     — raw-socket tools (nmap -sS, etc.)
+#
+# SP3 adversarial test (operator step — NOT verified by this file)
+#   See containers/egress-enforcer.sh header for the exact test commands.
+
+ARG BASE_IMAGE=strix-sandbox:dev
+
+# ── dev stage (unchanged existing image) ─────────────────────────────────────
+FROM ${BASE_IMAGE} AS dev
+
+# ── prod stage (adds SGL enforcement substrate) ───────────────────────────────
+FROM dev AS prod
+
+USER root
+
+# Ensure iptables is present and pinned.  Kali ships it; this makes the
+# dependency explicit so a future base-image change fails loudly here.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        iptables \
+        nftables \
+        iproute2 \
+        uidmap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Dedicated proxy user — runs the decision proxy as root (see egress-enforcer.sh).
+# uid 9999 is belt-and-suspenders; the root exemption in iptables is the active one.
+RUN useradd -r -M -s /usr/sbin/nologin -u 9999 strix-proxy
+
+# Revoke all sudo for pentester in the prod image.
+# A blocklist (NOPASSWD:ALL, !iptables, …) blocks direct invocation but not
+# indirect bypass via `sudo bash -c 'iptables …'` or `sudo python3 -c …`.
+# Full revocation eliminates the entire bypass surface.
+# The prod ENTRYPOINT runs as root (USER root below) so it can install iptables
+# rules and configure system files directly — no sudo needed for initialization.
+# Agent processes run as pentester (via `docker exec -u pentester`), which has
+# no sudo path at all.
+RUN sed -i '/pentester.*ALL/d' /etc/sudoers && visudo -c
+
+# Install the egress enforcer init script.
+COPY containers/egress-enforcer.sh /usr/local/sbin/strix-egress-enforcer
+RUN chmod +x /usr/local/sbin/strix-egress-enforcer
+
+# Preserve the dev entrypoint under a stable path so the prod entrypoint
+# can delegate to it.  The prod entrypoint replaces the default path.
+RUN cp /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint-dev.sh
+
+# Install the production entrypoint (runs enforcer as root, then delegates).
+COPY containers/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# The strix Python package (with strix.core.govern.scope + egress_proxy) must
+# be installed in the image.  In the full prod build pipeline this is done by
+# the parent COPY + pip install step from the dev Dockerfile.  If building
+# Dockerfile.prod standalone, uncomment:
+#
+#   COPY . /app/strix-src
+#   RUN pip install -e /app/strix-src
+#
+# Governance audit log directory (writable by pentester for the proxy log).
+RUN mkdir -p /var/log/strix && chown strix-proxy:strix-proxy /var/log/strix
+
+# Final USER is pentester: this is the default user for `docker exec`, which is
+# how the SDK runs agent tools.  Pentester has NO sudo in the prod image
+# (revoked above), so agent tool executions cannot flush the egress enforcer.
+#
+# The container's PRIMARY process (the prod entrypoint, which installs the
+# iptables rules) runs as root via ``user="root"`` passed at container-create
+# time in ``strix/runtime/docker_client.py`` — NOT via a Dockerfile USER root.
+# Docker separates the entrypoint user (create-time ``user=``) from the exec
+# default (Dockerfile ``USER``); this directive controls only the latter.
+USER pentester
+WORKDIR /workspace
+
+ENTRYPOINT ["docker-entrypoint.sh"]
