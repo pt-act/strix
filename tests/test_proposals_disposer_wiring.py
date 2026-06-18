@@ -1,9 +1,13 @@
-"""Disposer -> funnel live wiring.
+"""Disposer -> funnel report link (link-only).
 
 These tests cover the additive link in ``ReportState.add_vulnerability_report``: when a
-harness verdict reaches the report chokepoint, its ``evidence_class`` + report id are
-attached to the matching ProposalRecord in the funnel. The link is glass-box only — it
-never alters the report dict, the impact gate, or ``vulnerability_reports`` semantics.
+confirmed finding reaches the report chokepoint, its ``report_id`` is attached to the
+matching ProposalRecord in the funnel. As of the Spec B harness wiring this path is
+**link-only** — the *verdict* is now recorded from the single emit point
+(``record_harness_run``, driven by the factory emit-wrapper; see
+``tests/test_funnel_wrapper.py``), so this path attaches the report id and nothing else.
+The link is glass-box only — it never alters the report dict, the impact gate, or
+``vulnerability_reports`` semantics.
 """
 
 from __future__ import annotations
@@ -85,17 +89,15 @@ class TestDisposerFunnelWiring(TestCase):
             proposal_id=proposal_id,
         )
 
-    def test_explicit_proposal_id_links_verdict_and_report(self) -> None:
+    def test_explicit_proposal_id_links_report_only(self) -> None:
         proposal_id = self._start_proposal(proposal_id="prop-fixed")
         report_id = self._file_report(evidence_class="callback", proposal_id="prop-fixed")
 
         record = self.report_state.funnel_log.get(proposal_id)
         assert record is not None
-        self.assertEqual(len(record.verdicts), 1)
-        self.assertEqual(record.verdicts[0].verdict, "confirmed")
-        self.assertEqual(record.verdicts[0].evidence_class, "callback")
-        self.assertEqual(record.verdicts[0].harness_name, "p3_oob_harness")
+        # Link-only: the report id is attached; the verdict is owned by the emit-wrapper.
         self.assertEqual(record.report_id, report_id)
+        self.assertEqual(record.verdicts, [])
 
     def test_best_effort_endpoint_match_when_no_proposal_id(self) -> None:
         proposal_id = self._start_proposal()
@@ -103,12 +105,10 @@ class TestDisposerFunnelWiring(TestCase):
 
         record = self.report_state.funnel_log.get(proposal_id)
         assert record is not None
-        self.assertEqual(len(record.verdicts), 1)
-        self.assertEqual(record.verdicts[0].evidence_class, "race_result")
-        self.assertEqual(record.verdicts[0].harness_name, "p4_race_harness")
         self.assertIsNotNone(record.report_id)
+        self.assertEqual(record.verdicts, [])
 
-    def test_evidence_class_none_records_no_verdict(self) -> None:
+    def test_evidence_class_none_links_nothing(self) -> None:
         proposal_id = self._start_proposal()
         self._file_report(evidence_class="none")
 
@@ -129,17 +129,17 @@ class TestDisposerFunnelWiring(TestCase):
             self.assertEqual(record.verdicts, [])
             self.assertIsNone(record.report_id)
 
-    def test_already_verdicted_proposal_not_rematched(self) -> None:
+    def test_already_reported_proposal_not_relinked(self) -> None:
         proposal_id = self._start_proposal()
-        # First confirmed verdict links it.
-        self._file_report(evidence_class="callback")
-        # A second report for the same endpoint must not re-link the now-closed proposal.
+        # First report links its id (the matched proposal becomes report-bearing).
+        first_report_id = self._file_report(evidence_class="callback")
+        # A second report for the same endpoint must not re-link the already-reported proposal.
         self._file_report(evidence_class="diff")
 
         record = self.report_state.funnel_log.get(proposal_id)
         assert record is not None
-        self.assertEqual(len(record.verdicts), 1)
-        self.assertEqual(record.verdicts[0].evidence_class, "callback")
+        self.assertEqual(record.report_id, first_report_id)
+        self.assertEqual(record.verdicts, [])
 
     def test_additive_no_proposals_is_noop_and_report_unchanged(self) -> None:
         # No proposals in the funnel: report creation must succeed and stay byte-faithful.
@@ -149,3 +149,4 @@ class TestDisposerFunnelWiring(TestCase):
         report = next(r for r in self.report_state.vulnerability_reports if r["id"] == report_id)
         self.assertEqual(report["evidence_class"], "callback")
         self.assertEqual(report["impact_gate_decision"], "kept_from_cvss")
+

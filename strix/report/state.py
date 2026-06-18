@@ -292,17 +292,19 @@ class ReportState:
         evidence_class: EvidenceClass,
         proposal_id: str | None,
     ) -> None:
-        """Additively attach a disposer (harness) verdict onto its proposal record.
+        """Link-only: attach the final ``report_id`` onto its matching proposal record.
 
-        Glass-box instrumentation only: records the harness verdict + report id into the
-        matching ProposalRecord in the funnel. It never alters the report dict, the impact
-        gate, or ``vulnerability_reports``. Evidence-less (``"none"``) findings carry no
-        harness verdict and are skipped. If no proposal can be unambiguously matched, this
-        is a no-op — so engagements that never used the propose tool are unaffected.
+        Glass-box instrumentation only. As of the Spec B harness wiring, the *verdict* is
+        recorded from the single emit point (``record_harness_run``, driven by the factory
+        emit-wrapper at every harness exit); this path no longer records a verdict, it only
+        links the report id. It never alters the report dict, the impact gate, or
+        ``vulnerability_reports``. Evidence-less (``"none"``) findings carry no harness
+        verdict and are not linked. If no proposal can be unambiguously matched, this is a
+        no-op — so engagements that never used the propose tool are unaffected.
         """
         harness_name = _EVIDENCE_TO_HARNESS.get(evidence_class)
         if harness_name is None:
-            return  # "none" / unknown — no disposer verdict to attach.
+            return  # "none" / unknown — not a disposer-confirmed report.
 
         record: ProposalRecord | None = None
         if proposal_id is not None:
@@ -312,13 +314,71 @@ class ReportState:
         if record is None:
             return
 
-        self.funnel_log.record_harness_verdict(
-            record.proposal_id,
-            harness_name,
-            "confirmed",
-            evidence_class,
-        )
         self.funnel_log.record_report(record.proposal_id, report_id)
+
+    def record_harness_run(
+        self,
+        *,
+        harness_name: str,
+        verdict: str = "unconfirmed",
+        evidence_class: EvidenceClass = "none",
+        endpoint: str | None = None,
+        proposal_id: str | None = None,
+        cost_ms: float = 0.0,
+    ) -> str | None:
+        """Emit-only observability hook: append one harness run to its proposal record.
+
+        This is the Spec B Step-0 funnel-completeness hook. Spec A's report path records
+        **confirmed** runs only; this lets the funnel capture **every** harness run (confirmed
+        or unconfirmed) so ``Prec_gate`` / ``funnel_efficiency`` are unbiased.
+
+        Strictly observability: it creates no report, changes no harness verdict or
+        ``evidence_class``, mutates nothing outside ``funnel_log``, and **never raises** — so a
+        harness's disposition is byte-identical with or without it. Returns the ``proposal_id``
+        it recorded against, or ``None`` if no proposal matched (or on any internal error).
+        """
+        try:
+            ec: EvidenceClass = (
+                evidence_class if evidence_class in _VALID_EVIDENCE_CLASSES else "none"
+            )
+            record: ProposalRecord | None = None
+            if proposal_id is not None:
+                record = self.funnel_log.get(proposal_id)
+            if record is None:
+                record = self._match_recordable_proposal(endpoint)
+            if record is None:
+                return None
+            self.funnel_log.record_harness_verdict(
+                record.proposal_id, harness_name, verdict, ec, cost_ms=cost_ms
+            )
+        except Exception:
+            # Observability must never perturb the disposer: swallow everything.
+            logger.exception("funnel emit-hook failed (non-fatal; observability only)")
+            return None
+        else:
+            return record.proposal_id
+
+    def _match_recordable_proposal(self, endpoint: str | None) -> ProposalRecord | None:
+        """Best-effort single match for the emit-hook: a proposal for this endpoint.
+
+        Unlike ``_match_open_proposal``, both prior verdicts *and* a linked report are allowed
+        so that (a) successive runs of the same proposal accumulate, and (b) a confirmed run —
+        whose ``report_id`` was attached by the link-only report path *before* the emit-wrapper
+        fires on the tool's return — still records its verdict against that proposal. Still
+        requires an unambiguous single endpoint match; explicit ``proposal_id`` is preferred.
+        """
+        if not endpoint:
+            return None
+        needle = endpoint.strip()
+        if not needle:
+            return None
+        matches = [
+            r
+            for r in self.funnel_log.list_records()
+            if r.endpoint_key
+            and (r.endpoint_key == needle or needle in r.endpoint_key or r.endpoint_key in needle)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _match_open_proposal(self, endpoint: str | None) -> ProposalRecord | None:
         """Best-effort: the single open (verdict-less, unreported) proposal for an endpoint.
@@ -522,3 +582,4 @@ def litellm_cost_callback(
         report_state.record_observed_llm_cost(cost)
     except Exception:
         logger.exception("Failed to record observed LiteLLM cost")
+

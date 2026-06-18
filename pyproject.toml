@@ -367,6 +367,16 @@ reportAttributeAccessIssue = false
 reportUnusedFunction = false
 reportUnusedImport = false
 
+# Funnel emit-wrapper parses untyped JSON tool returns/args and references the funnel internals
+# (_EVIDENCE_TO_HARNESS) for byte-identity with the report path — same untyped-boundary posture
+# as the inventory/race tool modules above.
+[[tool.pyright.executionEnvironments]]
+root = "strix/agents/funnel_emit.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
 [[tool.pyright.executionEnvironments]]
 root = "strix/core/race/harness.py"
 reportUnknownVariableType = false

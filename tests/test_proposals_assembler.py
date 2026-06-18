@@ -6,6 +6,7 @@ write report state. The harness (disposer) still owns precision.
 
 from __future__ import annotations
 
+import inspect
 from unittest import TestCase
 
 from hypothesis import given
@@ -19,8 +20,9 @@ from strix.core.inventory.models import (
     ReachabilityAnnotation,
     ReachabilityStatus,
 )
+from strix.core.proposals import assembler as assembler_mod
 from strix.core.proposals.assembler import assemble_proposal_context
-from strix.core.proposals.models import C1C8Checklist, InterventionFlags
+from strix.core.proposals.models import C1C8Checklist, InterventionFlags, ProposalContext
 from strix.report.state import ReportState
 
 
@@ -114,6 +116,27 @@ class TestAssemblerBoundaryPBT(TestCase):
         self.assertEqual(state.run_record, state_before)
         self.assertIsNone(ctx.control_path_nl)
 
+    def test_boundary_is_structural(self) -> None:
+        """The locus-1 guarantee, asserted as structure — not via a ReportState the
+        assembler never receives (strengthened per the Spec A verdict, minor 2).
+        """
+        # 1. ProposalContext carries no evidence/verdict/report field: a proposal
+        #    structurally cannot express a disposition.
+        fields = set(ProposalContext.model_fields)
+        for forbidden in ("evidence_class", "verdict", "verdicts", "report_id"):
+            self.assertNotIn(forbidden, fields)
+
+        # 2. assemble_proposal_context accepts no ReportState and returns ProposalContext.
+        #    (Annotations are strings under ``from __future__ import annotations``.)
+        sig = inspect.signature(assemble_proposal_context)
+        self.assertNotIn("report", " ".join(p.lower() for p in sig.parameters))
+        self.assertEqual(sig.return_annotation, ProposalContext.__name__)
+
+        # 3. The proposal-stage source contains no disposer-write calls.
+        src = inspect.getsource(assembler_mod)
+        for forbidden in ("record_harness_verdict", "add_vulnerability_report", "evidence_class ="):
+            self.assertNotIn(forbidden, src)
+
 
 class TestAssemblerAblationPBT(_AssemblerTestCase):
     """Toggling one flag changes only its contribution; the others are byte-identical."""
@@ -188,3 +211,4 @@ class TestAssemblerDeterminismPBT(TestCase):
         b = assemble_proposal_context(endpoint, param, flags)
         self.assertEqual(a.control_path_nl, b.control_path_nl)
         self.assertEqual(a.knowledge_path_nl, b.knowledge_path_nl)
+

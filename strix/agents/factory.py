@@ -15,6 +15,7 @@ from agents.sandbox.errors import InvalidManifestPathError
 from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
+from strix.agents.funnel_emit import wrap_harness_tool
 from strix.agents.prompt import render_system_prompt
 from strix.tools.agents_graph.tools import (
     agent_finish,
@@ -78,6 +79,20 @@ from strix.tools.todo.tools import (
     update_todo,
 )
 from strix.tools.web_search.tool import web_search
+
+
+# Propose-dispose funnel completeness (Spec B harness wiring): wrap each deterministic disposer
+# tool so every harness run — confirmed or unconfirmed — is recorded once, from a single emit
+# point. The wrappers are behavior-identical (they return the tool output unchanged); see
+# strix/agents/funnel_emit.py. ``default_harness`` is the funnel name used for unconfirmed runs;
+# confirmed runs reproduce the report path's exact harness name from the filed evidence class.
+_report_oob_confirmed_candidate = wrap_harness_tool(
+    report_oob_confirmed_candidate, default_harness="p3_oob_harness"
+)
+_run_race_harness = wrap_harness_tool(run_race_harness, default_harness="p4_race_harness")
+_run_business_logic_violation_test = wrap_harness_tool(
+    run_business_logic_violation_test, default_harness="p2_diff_harness"
+)
 
 
 if TYPE_CHECKING:
@@ -376,7 +391,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     mint_oob_token,
     poll_oob_callbacks,
     confirm_oob_callback,
-    report_oob_confirmed_candidate,
+    _report_oob_confirmed_candidate,
     # Phase 3 — attack-surface inventory (black-box safe)
     collect_inventory_from_proxy,
     build_ranked_surface_map,
@@ -388,12 +403,12 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     enrich_inventory_from_js,
     enrich_inventory_from_forms,
     # Phase 4 — race-condition harness
-    run_race_harness,
+    _run_race_harness,
     # Phase 5 — business-logic state testing
     propose_business_logic_model,
     read_business_logic_model,
     list_flow_invariants,
-    run_business_logic_violation_test,
+    _run_business_logic_violation_test,
     read_business_logic_violation_result,
 )
 
