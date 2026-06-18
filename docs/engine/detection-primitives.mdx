@@ -1,0 +1,79 @@
+---
+title: "Detection Primitives"
+description: "The stateful, auth-aware detection primitives added by the fork (Phases 1–5)"
+---
+
+These are the deterministic harnesses that *dispose* of agent proposals. Each emits a specific
+[evidence class](/engine/overview) and is unit- and property-tested. They live under
+`strix/core/` (pure logic) and `strix/tools/` (agent-facing function tools).
+
+## Phase 0 — Foundation & impact gating
+
+- **Impact gate** in `strix/report/state.py` — gates every `vulnerability_report` on an
+  `evidence_class`; `none` downgrades severity.
+- **Pure network validators** (`strix/core/net/`): URL normalization, alternate-IP decoding,
+  `is_internal_target` (SSRF/metadata classification), redirect-chain validation. No Docker or
+  network side effects.
+- **Pinned, reproducible toolchain image** with a build-time self-check
+  (`containers/Dockerfile`, `containers/Dockerfile.toolcheck`).
+
+## Phase 1 — Identity state + semantic differential
+
+`strix/core/identity/`, `strix/core/diff/`
+
+- **Identity store** — durable per-target store of role, cookies, tokens, headers, provenance,
+  and freshness, with capture/import/export and redaction.
+- **Semantic differential engine** — `diff(responses, axis)` produces status-class,
+  body-structure, auth-signal, set-cookie, and normalized-length deltas. A **volatile-field
+  normalizer** canonicalizes timestamps, CSRF tokens, nonces, and request-ids so diffs are
+  meaningful.
+- **Replay engine** — re-issues a captured request under a substituted identity.
+- **Auth-matrix tool** — flags **IDOR / BFLA / expired-authorization** candidates with
+  `evidence_class=diff`.
+
+Direction matters: the detectors fire on the *violation* (e.g. expired session accepted, lower
+privilege succeeds where it should be denied) and stay silent on correctly-gated access.
+
+## Phase 2 — Native out-of-band oracle
+
+`strix/core/oob/`, `strix/runtime/oob/`, `strix/tools/oob/`
+
+- **Self-hosted interactsh sidecar** (DNS/HTTP) captures inbound hits with protocol, token,
+  source IP, timestamp, and raw payload — no third-party egress.
+- **Token registry** — per-engagement durable store mapping token → candidate, request, window.
+- **Correlator** — confirms a hit, or **quarantines** (unminted token), **rejects** (foreign
+  engagement), or **expires** (out-of-window) it; promotions are de-duplicated so a candidate is
+  confirmed at most once.
+- **`inject_confirm` tool** — `confirmed | unconfirmed` with `evidence_class=callback`.
+
+## Phase 3 — Unified attack-surface inventory
+
+`strix/core/inventory/`, `strix/tools/inventory/`
+
+- **Ranked surface map** — per-target endpoint map with merged sources/params and a monotonic
+  score.
+- **Endpoint normalizer / dedup** with recorded canonicalization rules.
+- **Parameter classifier** — agent-proposed, evidence-backed (object-id / url / html / file /
+  amount / role / state) with a deterministic **class-spray** library.
+- **Reachability seam** — white-box route → handler → auth-middleware → sink annotation
+  (reachable / unreachable / unknown), the source of `evidence_class=reachability`.
+
+## Phase 4 — Race-condition harness
+
+`strix/core/race/`
+
+- **Concurrent dispatcher** — N copies over a shared session with jitter offsets.
+- **Precondition manager** — establishes a baseline state (or reports inconclusive) with reset.
+- **Commit-count aggregator + verdict** — `race` when committed state-changes exceed the allowed
+  count (e.g. a single-use coupon redeemed more than once), `safe` at exactly one, and
+  **fail-safe toward `safe`** on ambiguous counters. Emits `evidence_class=race_result`.
+
+## Phase 5 — Business-logic state testing
+
+`strix/core/logic/`, `strix/tools/logic/`
+
+- **Orchestrator** — drives a flow under an invariant kind, producing an executed sequence plus a
+  deterministic artifact.
+- **Evidence gate** — emits a violation only when **all three** hold: an impossible state was
+  reached, a typed artifact (diff/callback/race_result) backs it, and it reproduces. Free-text
+  rationale is never accepted as evidence.

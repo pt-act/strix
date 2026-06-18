@@ -1,0 +1,60 @@
+---
+title: "Propose–Dispose"
+description: "The agent-proposes/harness-disposes architecture and its measurement track"
+---
+
+The architectural thesis of this fork: a non-generative disposer **decouples recall (the
+proposer) from precision (the harness)**, escaping the precision/recall trap that single-stage
+and LLM-critic detectors are stuck on.
+
+## The invariant
+
+- The LLM **proposes** candidates; deterministic harnesses **dispose** of them.
+- **`C ⊆ P`** — confirmed findings are a subset of proposals. The gate only removes proposals;
+  it never invents findings, and the disposer is never modified to "help" a confirmation.
+- Enforced in **type structure**: the proposal stage carries no `evidence_class` and no report
+  state, so a proposal cannot express a disposition. Precision is structurally unavailable to the
+  model.
+
+## Instrumentation (shipped)
+
+`strix/report/proposals.py`, `strix/core/proposals/`
+
+- **`ProposalRecord` / `FunnelLog`** — a durable per-engagement record of each proposal and the
+  harness verdicts it received.
+- **Derived metrics** (pure, read-only): `R_prop` (proposal recall over known labels),
+  `Prec_gate` (gate precision), `R_e2e` (end-to-end recall), `funnel_efficiency`
+  (harness runs per confirmation).
+- **Proposal-context assembler** — flag-gated; normalizes proposal context for ablation input.
+- An **emit-only hook** records every harness run (confirmed or not) so the metrics are
+  unbiased; it is additive and gate-neutral — the disposer's behavior is byte-identical with or
+  without it.
+
+## Measurement track (research, non-gating)
+
+`strix/research/`, `benchmarks/bv2p/`
+
+This track *measures* the engine; it never gates a product capability.
+
+- **Behavioral-V2P (B-V2P) corpus** — the same application deployed at a vulnerable commit and
+  its minimal-diff security-fix commit. The deterministic disposer's verdict must *flip* across
+  the pair while the raw model proposal does not. Seeds: IDOR (CVE-2024-7041) and SSRF
+  (CVE-2026-31829), each switchable via a `VULN_MODE` flag.
+- **Read-only funnel metrics** computed off the instrumentation funnel.
+- **Pre-registered experiments E1–E4** — a tradeoff curve (watch `Prec_gate`), a gap-stratified
+  paired-McNemar comparison vs. a single-stage proxy, an intervention ablation, and a
+  perturbation-invariance test. E2's gap metric, test, and equivalence margin are pre-registered
+  before any outcome is read.
+
+### Safety: the single-stage ablation mode
+
+One research baseline lets an agent *self-confirm* — the one path that would violate the
+locus-1 invariant. It is therefore **quarantined**:
+
+- **Off by default**, gated on an exact environment sentinel; runners refuse without it.
+- **Research-only entrypoint** (`python -m strix.research.ablation`); no production module imports
+  `strix.research`, and the ablation imports nothing from `strix.report`.
+- Its verdict type carries **no `evidence_class`** — it can never enter the product report path.
+
+It exists only to quantify what the propose–dispose architecture buys you, and it can never
+become a live failure mode.

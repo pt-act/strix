@@ -1,0 +1,68 @@
+---
+title: "Bounty-Grade Engine — Overview"
+description: "What this fork adds on top of upstream Strix: impact-gated, evidence-backed findings"
+---
+
+This fork re-shapes Strix from a breadth-oriented scanner into a **stateful, auth-aware,
+impact-gated bounty engine**. The agent's existing toolkit is unchanged; what is added is the
+machinery that makes findings **precise and evidence-gated**, and the instrumentation that lets
+you *measure* that precision.
+
+> Forked from upstream [Strix](https://github.com/usestrix/strix) at v1.0.4 (Apache-2.0).
+> See the repository [`CHANGELOG.md`](https://github.com/pt-act/strix/blob/main/CHANGELOG.md)
+> for the full list of changes.
+
+## The two ideas
+
+### 1. The impact gate
+
+Every `vulnerability_report` carries an **`evidence_class`**:
+
+| `evidence_class` | Meaning | Produced by |
+| --- | --- | --- |
+| `diff` | A semantic response differential proves the violation | Identity differential (Phase 1) |
+| `callback` | An out-of-band interaction confirmed the injection fired | OOB oracle (Phase 2) |
+| `reachability` | A white-box path reaches the sink | Attack-surface inventory (Phase 3) |
+| `race_result` | Concurrency produced more commits than allowed | Race harness (Phase 4) |
+| `none` | No artifact — **severity is downgraded** | — |
+
+A finding with `evidence_class = none` is never presented as a confirmed, high-severity result.
+A separate `artifact_type` carries the media/rendering type and is never conflated with the
+evidence class.
+
+### 2. Agent-proposes / harness-disposes
+
+The LLM **proposes** candidates; a **deterministic harness disposes** of them. The model never
+self-confirms a finding.
+
+- **Precision is owned by the harness**, recall by the proposer.
+- The gate is **neutral**: confirmed findings are always a subset of proposals (`C ⊆ P`). The
+  gate can only *remove* proposals, never *invent* them.
+- This is enforced in **type structure**, not convention — the proposal stage carries no
+  `evidence_class` and no report state, so a proposal structurally cannot express a disposition.
+
+This is the property that breaks the single-stage precision/recall trade-off: push the proposer
+for recall without leaking false positives into confirmation.
+
+## Capabilities at a glance
+
+| Phase | Capability | Evidence class |
+| --- | --- | --- |
+| 0 | Impact gate · pinned toolchain image · pure SSRF/URL validators | — |
+| 1 | Identity store · semantic differential · replay · auth-matrix (IDOR/BFLA/expired) | `diff` |
+| 2 | Self-hosted OOB oracle · token registry · correlator · dedup | `callback` |
+| 3 | Ranked surface map · param classifier · white-box reachability seam | `reachability` |
+| 4 | Race-condition harness (dispatcher · precondition · commit-count verdict) | `race_result` |
+| 5 | Business-logic state-testing orchestrator + evidence gate | diff/callback/race |
+
+The detection primitives are documented in
+[Detection Primitives](/engine/detection-primitives); the architecture and its measurement track
+in [Propose–Dispose](/engine/propose-dispose).
+
+## Design guarantees
+
+- **Reuse over reimplement** — each phase builds on the prior primitives; no second differ, no
+  new evidence class without explicit need.
+- **Deterministic, inspectable harnesses** with property-based invariants.
+- **Self-hosting / no leak** — OOB confirmation uses the self-hosted oracle; target data never
+  leaves to a third party.

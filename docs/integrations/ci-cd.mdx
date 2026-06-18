@@ -38,8 +38,8 @@ security-scan:
     STRIX_LLM: $STRIX_LLM
     LLM_API_KEY: $LLM_API_KEY
   script:
-    - curl -sSL https://strix.ai/install | bash
-    - strix -n -t ./ --scan-mode quick
+    - git clone https://github.com/pt-act/strix.git && cd strix && uv sync && ./scripts/docker.sh ci
+    - STRIX_IMAGE=strix-sandbox:ci uv run strix -n -t ../ --scan-mode quick
 ```
 
 ## Jenkins
@@ -54,8 +54,8 @@ pipeline {
     stages {
         stage('Security Scan') {
             steps {
-                sh 'curl -sSL https://strix.ai/install | bash'
-                sh 'strix -n -t ./ --scan-mode quick'
+                sh 'git clone https://github.com/pt-act/strix.git && cd strix && uv sync && ./scripts/docker.sh ci'
+                sh 'cd strix && STRIX_IMAGE=strix-sandbox:ci uv run strix -n -t ../ --scan-mode quick'
             }
         }
     }
@@ -74,11 +74,11 @@ jobs:
       - checkout
       - setup_remote_docker
       - run:
-          name: Install Strix
-          command: curl -sSL https://strix.ai/install | bash
+          name: Install & build
+          command: git clone https://github.com/pt-act/strix.git && cd strix && uv sync && ./scripts/docker.sh ci
       - run:
           name: Run Scan
-          command: strix -n -t ./ --scan-mode quick
+          command: cd strix && STRIX_IMAGE=strix-sandbox:ci uv run strix -n -t ../ --scan-mode quick
 ```
 
 <Note>

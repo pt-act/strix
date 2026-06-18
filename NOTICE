@@ -1,0 +1,25 @@
+Strix — Bounty-Grade Engine (fork)
+Copyright 2026 pt-act
+
+This product is a derivative work based on Strix:
+
+    Strix
+    Copyright 2025 OmniSecure Inc.
+    https://github.com/usestrix/strix
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this software except in compliance with the License. A copy of the License is
+included in the LICENSE file and is available at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This fork adds an impact gate, stateful auth-aware detection primitives
+(identity/differential, out-of-band oracle, attack-surface inventory, race
+harness, business-logic testing), and an agent-proposes / harness-disposes
+architecture with its measurement track. See CHANGELOG.md for the full list of
+changes. It is an independent project and is not affiliated with, nor endorsed
+by, OmniSecure Inc. or the upstream Strix project.
+
+This software bundles or builds upon other open-source components, each under
+its own license, including LiteLLM, Caido, Nuclei, interactsh, Playwright, and
+Textual. Their respective licenses and notices apply to those components.
