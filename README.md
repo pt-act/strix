@@ -2,7 +2,7 @@
 
 # Strix — Bounty-Grade Engine (fork)
 
-### Autonomous AI hackers that find vulnerabilities and prove them with evidence.
+### Autonomous AI that finds vulnerabilities and prove them with evidence.
 
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-3b82f6?style=flat-square" alt="License"></a>
 <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-fork-2b9246?style=flat-square" alt="Changelog"></a>
