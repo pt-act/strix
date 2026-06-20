@@ -52,14 +52,29 @@ RUN apt-get update && \
 RUN useradd -r -M -s /usr/sbin/nologin -u 9999 strix-proxy
 
 # Revoke all sudo for pentester in the prod image.
-# A blocklist (NOPASSWD:ALL, !iptables, …) blocks direct invocation but not
-# indirect bypass via `sudo bash -c 'iptables …'` or `sudo python3 -c …`.
-# Full revocation eliminates the entire bypass surface.
-# The prod ENTRYPOINT runs as root (USER root below) so it can install iptables
-# rules and configure system files directly — no sudo needed for initialization.
-# Agent processes run as pentester (via `docker exec -u pentester`), which has
+# 1. gpasswd -d pentester sudo — removes the group path (%sudo rule in Kali).
+# 2. usermod -p '*' pentester — disables password login (belt-and-suspenders).
+# 3. sed -i … /etc/sudoers   — removes any explicit pentester ALL= line.
+# 4. Defaults !authenticate   — bypasses PAM auth for sudo so the clean
+#    "not in the sudoers file" message surfaces instead of PAM's
+#    "a password is required" (PAM intercepts before sudoers is checked).
+#
+# After this, `sudo` for pentester returns "not in the sudoers file" —
+# explicit revocation, not an implicit password absence.
+#
+# Note: Defaults !authenticate is global (all users), which is acceptable
+# in a container with no interactive logins.  Root already has
+# ALL=(ALL:ALL) ALL so the setting is a no-op for root.
+#
+# The prod ENTRYPOINT runs as root (USER root below) so it can install
+# iptables rules directly — no sudo needed for initialization.  Agent
+# processes run as pentester (via `docker exec -u pentester`), which has
 # no sudo path at all.
-RUN sed -i '/pentester.*ALL/d' /etc/sudoers && visudo -c
+RUN gpasswd -d pentester sudo && \
+    usermod -p '*' pentester && \
+    sed -i '/pentester.*ALL/d' /etc/sudoers && \
+    echo 'Defaults !authenticate' >> /etc/sudoers && \
+    visudo -c
 
 # Install the egress enforcer init script.
 COPY containers/egress-enforcer.sh /usr/local/sbin/strix-egress-enforcer
@@ -73,14 +88,25 @@ RUN cp /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint-dev.
 COPY containers/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# The strix Python package (with strix.core.govern.scope + egress_proxy) must
-# be installed in the image.  In the full prod build pipeline this is done by
-# the parent COPY + pip install step from the dev Dockerfile.  If building
-# Dockerfile.prod standalone, uncomment:
-#
-#   COPY . /app/strix-src
-#   RUN pip install -e /app/strix-src
-#
+# Install strix governance modules (scope decision service + egress proxy)
+# into the system Python path.  Only the minimal dependency set is installed
+# (pydantic + typing_extensions); the full strix-agent package with its
+# heavyweight deps (openai-agents, textual, docker, …) is NOT needed here.
+# Force-reinstall to purge any stale .pyc / cached artifacts that shadow
+# the real module (observed: typing_extensions 4.15 metadata present but
+# Sentinel symbol missing — stale bytecode from the caido-sdk-client install).
+# Pinned to exact versions observed at SP3-pass time for reproducibility.
+RUN /app/.venv/bin/pip install --no-cache-dir --force-reinstall \
+    'pydantic==2.13.4' 'typing_extensions==4.15.0' 'pydantic-core==2.46.4'
+
+COPY strix/__init__.py                   /opt/strix-python/strix/__init__.py
+COPY strix/core/__init__.py              /opt/strix-python/strix/core/__init__.py
+COPY strix/core/govern/__init__.py       /opt/strix-python/strix/core/govern/__init__.py
+COPY strix/core/govern/scope.py          /opt/strix-python/strix/core/govern/scope.py
+COPY strix/runtime/__init__.py           /opt/strix-python/strix/runtime/__init__.py
+COPY strix/runtime/egress_proxy.py       /opt/strix-python/strix/runtime/egress_proxy.py
+RUN chown -R root:root /opt/strix-python/strix
+
 # Governance audit log directory (writable by pentester for the proxy log).
 RUN mkdir -p /var/log/strix && chown strix-proxy:strix-proxy /var/log/strix
 
