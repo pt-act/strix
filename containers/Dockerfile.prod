@@ -55,16 +55,12 @@ RUN useradd -r -M -s /usr/sbin/nologin -u 9999 strix-proxy
 # 1. gpasswd -d pentester sudo — removes the group path (%sudo rule in Kali).
 # 2. usermod -p '*' pentester — disables password login (belt-and-suspenders).
 # 3. sed -i … /etc/sudoers   — removes any explicit pentester ALL= line.
-# 4. Defaults !authenticate   — bypasses PAM auth for sudo so the clean
-#    "not in the sudoers file" message surfaces instead of PAM's
-#    "a password is required" (PAM intercepts before sudoers is checked).
 #
-# After this, `sudo` for pentester returns "not in the sudoers file" —
-# explicit revocation, not an implicit password absence.
-#
-# Note: Defaults !authenticate is global (all users), which is acceptable
-# in a container with no interactive logins.  Root already has
-# ALL=(ALL:ALL) ALL so the setting is a no-op for root.
+# After this, pentester cannot escalate: sudo exits non-zero with
+# "a password is required" (sudo 1.9.x forces PAM audit authentication
+# for unauthorised users before printing the denial; `sudo -n` aborts
+# that step with exit 1).  `sudo -l -U pentester` confirms
+# "not allowed to run sudo" — no policy match exists.
 #
 # The prod ENTRYPOINT runs as root (USER root below) so it can install
 # iptables rules directly — no sudo needed for initialization.  Agent
@@ -73,7 +69,6 @@ RUN useradd -r -M -s /usr/sbin/nologin -u 9999 strix-proxy
 RUN gpasswd -d pentester sudo && \
     usermod -p '*' pentester && \
     sed -i '/pentester.*ALL/d' /etc/sudoers && \
-    echo 'Defaults !authenticate' >> /etc/sudoers && \
     visudo -c
 
 # Install the egress enforcer init script.
