@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from agents.items import TResponseInputItem
     from agents.memory import Session
 
+    from strix.core.govern.breaker import CircuitBreaker
+    from strix.core.govern.cost_ceiling import CostCeiling, CostSignal
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +46,51 @@ class AgentCoordinator:
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
+        # SGL governance controls — wired by run_strix_scan() or tests.
+        self.breaker: CircuitBreaker | None = None
+        self.cost_ceiling: CostCeiling | None = None
+        self._root_agent_id: str | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
 
     def mark_shutting_down(self) -> None:
         self.is_shutting_down = True
+
+    def set_governance_controls(
+        self,
+        *,
+        breaker: CircuitBreaker | None = None,
+        cost_ceiling: CostCeiling | None = None,
+        root_agent_id: str | None = None,
+    ) -> None:
+        """Attach SGL governance controls to this coordinator.
+
+        Called by ``run_strix_scan()`` after creating the breaker and
+        cost-ceiling instances.  The ``root_agent_id`` is needed so the
+        kill-switch can cancel the entire agent subtree.
+        """
+        self.breaker = breaker
+        self.cost_ceiling = cost_ceiling
+        self._root_agent_id = root_agent_id
+
+    async def kill_switch(self, reason: str) -> None:
+        """Halt all in-flight actions — the SGL kill-switch.
+
+        Sets ``is_shutting_down`` so the run loop stops starting new work,
+        then cancels every descendant task of the root agent.  No async
+        OOB probe or child agent may complete after this returns.
+
+        Called when:
+        * The circuit breaker trips OPEN (error-rate or latency breach).
+        * The cost ceiling emits HALT (resource exhaustion).
+        """
+        logger.critical("SGL KILL-SWITCH activated: %s", reason)
+        self.is_shutting_down = True
+        root_id = self._root_agent_id
+        if root_id is not None:
+            await self.cancel_descendants(root_id)
+        logger.critical("SGL KILL-SWITCH: all descendants cancelled")
 
     async def register(
         self,

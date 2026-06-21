@@ -52,3 +52,18 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             )
         except Exception:
             logger.exception("failed to record SDK usage for agent %s", agent_id)
+
+        # SGL cost ceiling: record token consumption
+        coordinator = ctx.get("coordinator")
+        if coordinator is not None and hasattr(coordinator, "cost_ceiling"):
+            ceiling = coordinator.cost_ceiling
+            if ceiling is not None:
+                try:
+                    total = getattr(response.usage, "total_tokens", 0) or 0
+                    ceiling.record_tokens(total)
+                    ceiling.record_tool_call()
+                except Exception:
+                    logger.exception(
+                        "failed to record cost ceiling usage for agent %s",
+                        agent_id,
+                    )

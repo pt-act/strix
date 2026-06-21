@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,8 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
+from strix.core.govern.breaker import CircuitBreaker
+from strix.core.govern.cost_ceiling import CostCeiling
 from strix.core.hooks import ReportUsageHooks
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
@@ -101,6 +104,10 @@ async def run_strix_scan(
     if coordinator is None:
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
+
+    # SGL governance controls — create and wire into coordinator
+    sgl_breaker = CircuitBreaker()
+    sgl_cost_ceiling = CostCeiling()
 
     from strix.tools.notes.tools import hydrate_notes_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk
@@ -188,6 +195,14 @@ async def run_strix_scan(
                 skills=skills,
             )
 
+        # Wire governance controls now that root_id is known
+        # (also wire for resume scans — governance controls are fresh per scan)
+        coordinator.set_governance_controls(
+            breaker=sgl_breaker,
+            cost_ceiling=sgl_cost_ceiling,
+            root_agent_id=root_id,
+        )
+
         child_agent_builder = make_child_factory(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
@@ -210,6 +225,14 @@ async def run_strix_scan(
                 **kwargs,
             )
 
+        # Extract scope rules for Caido decide() routing in tools/proxy/tools.py
+        scope_rules_list: list[str] = []
+        for t in scan_config.get("targets") or []:
+            if t.get("scope_rules"):
+                scope_rules_list.extend(t["scope_rules"])
+        if not scope_rules_list:
+            scope_rules_list = list(scan_config.get("scope_rules") or [])
+
         context: dict[str, Any] = {
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
@@ -218,6 +241,11 @@ async def run_strix_scan(
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
+            "scope_rules": scope_rules_list,
+            "strix_egress_enforce": bool(
+                os.environ.get("STRIX_EGRESS_ENFORCE")
+                or scan_config.get("strix_egress_enforce")
+            ),
         }
 
         root_session = open_agent_session(root_id, agents_db)

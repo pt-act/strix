@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir \
     "uvicorn>=0.34.0" \
     "pydantic>=2.11.0"
 
+COPY core.py .
 COPY app.py .
 
 ENV VULN_MODE=1

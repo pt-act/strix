@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time as _time
 import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -92,6 +93,21 @@ async def run_agent_loop(
         return result
 
     while True:
+        # SGL governance: halt root loop immediately after kill-switch
+        if coordinator.is_shutting_down:
+            logger.warning("Root agent %s halted by kill_switch", agent_id)
+            return result
+
+        # SGL governance: check cost ceiling before starting new work
+        if coordinator.cost_ceiling is not None:
+            from strix.core.govern.cost_ceiling import CostSignal
+
+            signal = coordinator.cost_ceiling.check()
+            if signal is CostSignal.HALT:
+                logger.critical("SGL cost ceiling HALT — stopping agent %s", agent_id)
+                await coordinator.kill_switch("cost_ceiling_halt")
+                return result
+
         try:
             await coordinator.wait_for_message(agent_id)
         except asyncio.CancelledError:
@@ -278,6 +294,26 @@ async def _run_noninteractive_until_lifecycle(
     invalid_final_output_limit = max(1, max_turns)
 
     while True:
+        # SGL governance: halt root loop immediately after kill-switch
+        if coordinator.is_shutting_down:
+            logger.warning(
+                "Non-interactive agent %s halted by kill_switch", agent_id
+            )
+            return result
+
+        # SGL governance: check cost ceiling before each cycle
+        if coordinator.cost_ceiling is not None:
+            from strix.core.govern.cost_ceiling import CostSignal
+
+            signal = coordinator.cost_ceiling.check()
+            if signal is CostSignal.HALT:
+                logger.critical(
+                    "SGL cost ceiling HALT — stopping non-interactive agent %s",
+                    agent_id,
+                )
+                await coordinator.kill_switch("cost_ceiling_halt")
+                return result
+
         result = await _run_cycle(
             agent,
             coordinator,
@@ -337,8 +373,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
     image_strips = 0
+    cycle_start: float = 0.0
     while True:
         try:
+            cycle_start = _time.monotonic()
             await coordinator.mark_running(agent_id)
             stream = Runner.run_streamed(
                 agent,
@@ -378,6 +416,11 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             finally:
                 await coordinator.detach_stream(agent_id, stream)
         except Exception as exc:
+            # SGL governance: record error to breaker before handling
+            if coordinator.breaker is not None:
+                cycle_ms = (_time.monotonic() - cycle_start) * 1000.0 if cycle_start > 0 else 0.0
+                await coordinator.breaker.record(latency_ms=cycle_ms, is_error=True)
+
             if (
                 image_strips < 3
                 and session is not None
@@ -412,6 +455,20 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 raise
             return None
         else:
+            # SGL governance: record successful cycle to breaker, trip on OPEN
+            if coordinator.breaker is not None:
+                from strix.core.govern.breaker import BreakerState
+
+                cycle_ms = (_time.monotonic() - cycle_start) * 1000.0 if cycle_start > 0 else 0.0
+                new_state = await coordinator.breaker.record(
+                    latency_ms=cycle_ms, is_error=False
+                )
+                if new_state is BreakerState.OPEN:
+                    await coordinator.kill_switch(
+                        f"breaker_trip: {coordinator.breaker.trip_reason}"
+                    )
+                    return stream
+
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
 

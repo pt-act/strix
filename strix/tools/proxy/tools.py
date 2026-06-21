@@ -378,6 +378,54 @@ async def repeat_request(
         components = caido_api.parse_raw_request(raw_str)
         full_url = caido_api.full_url_from_components(original, components, mods)
         modified = caido_api.apply_modifications(components, mods, full_url)
+
+        # SGL defence-in-depth: check decide() before replaying.
+        # Caido runs as root inside the container (exempt from the
+        # iptables egress enforcer), so the app-layer decide() check
+        # is the only layer that catches out-of-scope replays.
+        from urllib.parse import urlparse as _urlparse
+
+        from strix.core.govern.scope import (
+            ActionClass,
+            EngagementCtx,
+            Target,
+            Verdict,
+            decide,
+            load_scope,
+        )
+
+        # SGL defence-in-depth: check decide() whenever enforcement is active.
+        # Caido runs as root inside the container (exempt from the iptables
+        # egress enforcer), so the app-layer decide() check is the gate for
+        # this privileged path.  When enforcement is off (e.g. local dev) the
+        # check is skipped; when enforcement is on, empty rules → DENY
+        # (fail-closed), matching SP2 semantics.
+        inner = ctx.context if isinstance(ctx.context, dict) else {}
+        enforce_active = bool(inner.get("strix_egress_enforce"))
+        scope_rules_raw = inner.get("scope_rules")
+        if enforce_active:
+            replay_ctx = load_scope(scope_rules_raw if isinstance(scope_rules_raw, list) else [])
+            parsed = _urlparse(modified["url"])
+            replay_host = parsed.hostname or ""
+            if replay_host:
+                sgl_decision = decide(
+                    Target(host=replay_host, action_class=ActionClass.EXPLOIT),
+                    replay_ctx,
+                )
+                if sgl_decision.verdict is not Verdict.ALLOW:
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": (
+                                f"SGL scope check denied replay to {replay_host}: "
+                                f"{sgl_decision.reason}"
+                            ),
+                            "sgl_denied": True,
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    )
+
         connection, raw = caido_api.build_raw_request(
             method=modified["method"],
             url=modified["url"],

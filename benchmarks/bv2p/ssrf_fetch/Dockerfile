@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir \
 COPY strix /src/strix
 ENV PYTHONPATH=/src
 
+COPY benchmarks/bv2p/ssrf_fetch/core.py .
 COPY benchmarks/bv2p/ssrf_fetch/app.py .
 
 ENV VULN_MODE=1

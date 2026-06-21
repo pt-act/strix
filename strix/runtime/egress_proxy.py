@@ -1,4 +1,4 @@
-"""strix.runtime.egress_proxy — SGL-S0 transparent decision proxy.
+"""strix.runtime.egress_proxy — SGL-S0/S7 transparent decision proxy.
 
 Runs INSIDE the container as root.  iptables redirects all outbound TCP and
 DNS UDP to this process, which consults the Decision Service (govern/scope.py)
@@ -17,6 +17,18 @@ Protocol support
   socket from the TCP listener on the same port number.
   The handler parses the QNAME, calls decide() on the domain, then either
   forwards to the upstream resolver (ALLOW) or returns NXDOMAIN (DENY).
+
+F1 — DNS→IP correlation (S7)
+-----------------------------
+On a DNS ALLOW, the proxy parses A/AAAA records from the upstream response
+and records resolved IPs in a short-TTL per-engagement allow-set.  The TCP
+handler authorizes a connection if the destination IP matches:
+  (a) a direct IP/CIDR scope rule, OR
+  (b) a currently-resolved IP in the allow-set.
+
+DNS-rebinding defense: resolved IPs that are private/loopback/link-local/
+metadata are NOT added to the allow-set unless that range is explicitly in
+scope (reuses strix.core.net.is_internal_target logic inline).
 """
 
 from __future__ import annotations
@@ -31,9 +43,13 @@ import socket
 import struct
 from typing import Final
 
+import ipaddress
+import time
+
 from strix.core.govern.scope import (
     ActionClass,
     EngagementCtx,
+    ScopeRule,
     Target,
     Verdict,
     decide,
@@ -46,6 +62,7 @@ _CONNECT_TIMEOUT: Final = 10.0
 _BUFFER: Final = 65536
 _DNS_TIMEOUT: Final = 3.0
 _DNS_UPSTREAM: Final = os.environ.get("STRIX_DNS_UPSTREAM", "8.8.8.8")
+_RESOLVED_IP_TTL: Final = int(os.environ.get("STRIX_RESOLVED_IP_TTL", "300"))
 
 # SO_ORIGINAL_DST — Linux ioctl to recover the pre-REDIRECT destination.
 SO_ORIGINAL_DST: Final = 80
@@ -67,6 +84,117 @@ def _reload_ctx() -> None:
     global _CTX
     _CTX = _load_ctx_from_env()
     logger.info("Decision context reloaded: %d rules", len(_CTX.rules))
+
+
+# ─────────────────────────────────────── F1: resolved-IP allow-set ──────────
+# Maps IP string → expiry monotonic timestamp.
+# Populated by DNS handler on ALLOW; checked by TCP handler.
+_resolved_ips: dict[str, float] = {}
+_resolved_lock: asyncio.Lock | None = None  # created at runtime in _main()
+
+# CGNAT range not classified as private by all Python versions.
+_CGNAT_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
+_METADATA_IPS: frozenset[str] = frozenset(
+    {"169.254.169.254", "fd00:ec2::254"}
+)
+
+
+def _is_internal_ip(ip_str: str) -> bool:
+    """Return True if ip_str is a private/loopback/link-local/metadata address.
+    Inline copy of strix.core.net.classifier logic to avoid import
+    dependency in the container image.
+    """
+    if ip_str in _METADATA_IPS:
+        return True
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True  # unparseable → treat as internal (fail-closed)
+    if isinstance(addr, ipaddress.IPv4Address):
+        return bool(
+            addr.is_loopback
+            or addr.is_private
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+            or addr in _CGNAT_NETWORK
+        )
+    # IPv6
+    return bool(
+        addr.is_loopback or addr.is_private or addr.is_link_local or addr.is_reserved or addr.is_multicast
+    )
+
+
+def _is_ip_in_scope(ip_str: str, rules: list[ScopeRule]) -> bool:
+    """Check if an IP matches any direct IP/CIDR scope rule."""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    for rule in rules:
+        pattern = rule.pattern.strip().lower()
+        if "/" in pattern:
+            try:
+                net = ipaddress.ip_network(pattern, strict=False)
+                if addr in net:
+                    return True
+            except ValueError:
+                continue
+        try:
+            if addr == ipaddress.ip_address(pattern):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+async def _add_resolved_ips(ips: list[str], ttl: float) -> None:
+    """Add resolved IPs to the allow-set if they pass the rebinding defense."""
+    now = time.monotonic()
+    expiry = now + ttl
+    async with _get_lock():
+        for ip_str in ips:
+            if _is_internal_ip(ip_str):
+                # DNS-rebinding defense: do NOT add private/metadata IPs
+                # unless explicitly in scope via a CIDR/IP rule.
+                if not _is_ip_in_scope(ip_str, _CTX.rules):
+                    logger.warning(
+                        "F1 rebinding-blocked: %s is internal and not in scope", ip_str
+                    )
+                    continue
+            _resolved_ips[ip_str] = expiry
+            logger.info("F1 allow-set added: %s (ttl=%ds)", ip_str, int(ttl))
+
+
+async def _check_resolved_ip(ip_str: str) -> bool:
+    """Return True if ip_str is currently in the resolved-IP allow-set."""
+    async with _get_lock():
+        expiry = _resolved_ips.get(ip_str)
+        if expiry is None:
+            return False
+        if time.monotonic() > expiry:
+            # Expired — lazy cleanup
+            _resolved_ips.pop(ip_str, None)
+            return False
+        return True
+
+
+async def _cleanup_expired_ips() -> None:
+    """Purge expired entries from the allow-set."""
+    now = time.monotonic()
+    async with _get_lock():
+        expired = [ip for ip, exp in _resolved_ips.items() if now > exp]
+        for ip in expired:
+            del _resolved_ips[ip]
+
+
+
+def _get_lock() -> asyncio.Lock:
+    """Return the resolved-IP lock, creating it if needed."""
+    global _resolved_lock
+    if _resolved_lock is None:
+        _resolved_lock = asyncio.Lock()
+    return _resolved_lock
 
 
 # ─────────────────────────────────────── DNS wire-format helpers ────────────
@@ -115,6 +243,69 @@ def _nxdomain_response(query: bytes) -> bytes:
     counts = b"\x00\x01\x00\x00\x00\x00\x00\x00"
     # Append the original question section verbatim
     return txid + flags + counts + query[12:]
+
+
+def _parse_dns_a_records(response: bytes) -> list[str]:
+    """Extract A (IPv4) and AAAA (IPv6) addresses from a DNS response.
+
+    Parses the answer section after the question section.  Handles
+    standard label encoding and compression pointers.
+    """
+    if len(response) < 12:
+        return []
+
+    # Skip question section
+    qdcount = struct.unpack_from("!H", response, 4)[0]
+    offset = 12
+    for _ in range(qdcount):
+        while offset < len(response):
+            length = response[offset]
+            if length == 0:
+                offset += 1
+                break
+            if (length & 0xC0) == 0xC0:
+                offset += 2
+                break
+            offset += 1 + length
+        # Skip QTYPE (2) + QCLASS (2)
+        offset += 4
+
+    # Parse answer section
+    ancount = struct.unpack_from("!H", response, 6)[0]
+    ips: list[str] = []
+    for _ in range(ancount):
+        if offset >= len(response):
+            break
+        # Skip name (may be a pointer)
+        if (response[offset] & 0xC0) == 0xC0:
+            offset += 2
+        else:
+            while offset < len(response) and response[offset] != 0:
+                if (response[offset] & 0xC0) == 0xC0:
+                    offset += 2
+                    break
+                offset += 1 + response[offset]
+            else:
+                offset += 1  # skip the trailing zero
+
+        if offset + 10 > len(response):
+            break
+        rtype = struct.unpack_from("!H", response, offset)[0]
+        rdlength = struct.unpack_from("!H", response, offset + 8)[0]
+        rdata_offset = offset + 10
+        offset = rdata_offset + rdlength
+
+        if rdata_offset + rdlength > len(response):
+            break
+
+        if rtype == 1 and rdlength == 4:  # A record
+            ip = socket.inet_ntoa(response[rdata_offset:rdata_offset + 4])
+            ips.append(ip)
+        elif rtype == 28 and rdlength == 16:  # AAAA record
+            ip = socket.inet_ntop(socket.AF_INET6, response[rdata_offset:rdata_offset + 16])
+            ips.append(ip)
+
+    return ips
 
 
 async def _forward_dns(query: bytes) -> bytes | None:
@@ -187,6 +378,12 @@ class _DnsEnforcerProtocol(asyncio.DatagramProtocol):
             if response is None:
                 # Upstream unavailable — fail closed.
                 response = _nxdomain_response(data)
+            else:
+                # F1: extract resolved IPs from the DNS response and
+                # add them to the short-TTL allow-set for TCP authorization.
+                resolved = _parse_dns_a_records(response)
+                if resolved:
+                    await _add_resolved_ips(resolved, _RESOLVED_IP_TTL)
         else:
             response = _nxdomain_response(data)
 
@@ -251,6 +448,17 @@ async def _handle_connection(
     target = Target(host=dst_ip, action_class=action)
     decision = decide(target, _CTX)
 
+    # F1: if direct scope match fails, check the resolved-IP allow-set.
+    # A hostname-scoped ALLOW via DNS will have populated this set.
+    if decision.verdict != Verdict.ALLOW:
+        if await _check_resolved_ip(dst_ip):
+            from strix.core.govern.scope import Decision as _Decision
+            decision = _Decision(
+                verdict=Verdict.ALLOW,
+                reason=f"f1_resolved_ip_allow:{dst_ip}",
+                authz_tier=decision.authz_tier,
+            )
+
     logger.info(
         "TCP %s:%d → %s:%d action=%s verdict=%s reason=%s",
         peer[0], peer[1], dst_ip, dst_port,
@@ -299,6 +507,8 @@ async def _health_server(socket_path: str) -> None:
 
 
 async def _main(port: int, socket_path: str) -> None:
+    global _resolved_lock
+    _resolved_lock = asyncio.Lock()
     _reload_ctx()
 
     loop = asyncio.get_running_loop()
