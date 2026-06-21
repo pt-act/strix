@@ -27,6 +27,11 @@ from strix.tools.agents_graph.tools import (
     wait_for_message,
 )
 from strix.tools.finish.tool import finish_scan
+from strix.tools.identity.tools import (
+    auth_matrix,
+    identity_store_list,
+    identity_store_upsert,
+)
 from strix.tools.inventory.tools import (
     build_ranked_surface_map,
     classify_inventory_params,
@@ -87,6 +92,7 @@ from strix.tools.web_search.tool import web_search
 # point. The wrappers are behavior-identical (they return the tool output unchanged); see
 # strix/agents/funnel_emit.py. ``default_harness`` is the funnel name used for unconfirmed runs;
 # confirmed runs reproduce the report path's exact harness name from the filed evidence class.
+_auth_matrix = wrap_harness_tool(auth_matrix, default_harness="p2_diff_harness")
 _report_oob_confirmed_candidate = wrap_harness_tool(
     report_oob_confirmed_candidate, default_harness="p3_oob_harness"
 )
@@ -388,6 +394,10 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     wait_for_message,
     create_agent,
     stop_agent,
+    # Phase 1 — identity + auth-matrix (IDOR/BFLA/expired diff disposer)
+    identity_store_upsert,
+    identity_store_list,
+    _auth_matrix,
     # Phase 2 — OOB oracle (deterministic disposer for SSRF/XXE/etc.)
     mint_oob_token,
     poll_oob_callbacks,
