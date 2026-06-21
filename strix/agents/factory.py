@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -458,6 +459,12 @@ def build_strix_agent(
         is_whitebox,
     )
 
+    # SGL-S0 containment: when egress enforcement is active, agent tools run as
+    # 'pentester' so they are subject to the iptables redirect (not uid-0 exempt).
+    # The container entrypoint still runs as root (docker_client.py sets
+    # create_kwargs["user"]="root") to install iptables rules at boot.
+    run_as = "pentester" if os.environ.get("STRIX_EGRESS_ENFORCE") == "1" else None
+
     return SandboxAgent(
         name=name,
         instructions=instructions,
@@ -476,6 +483,7 @@ def build_strix_agent(
                 ),
             ),
         ],
+        run_as=run_as,
     )
 
 

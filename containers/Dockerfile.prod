@@ -98,6 +98,11 @@ COPY strix/__init__.py                   /opt/strix-python/strix/__init__.py
 COPY strix/core/__init__.py              /opt/strix-python/strix/core/__init__.py
 COPY strix/core/govern/__init__.py       /opt/strix-python/strix/core/govern/__init__.py
 COPY strix/core/govern/scope.py          /opt/strix-python/strix/core/govern/scope.py
+COPY strix/core/govern/limiter.py        /opt/strix-python/strix/core/govern/limiter.py
+COPY strix/core/govern/ownership.py      /opt/strix-python/strix/core/govern/ownership.py
+COPY strix/core/govern/breaker.py        /opt/strix-python/strix/core/govern/breaker.py
+COPY strix/core/govern/cost_ceiling.py   /opt/strix-python/strix/core/govern/cost_ceiling.py
+COPY strix/core/govern/audit.py          /opt/strix-python/strix/core/govern/audit.py
 COPY strix/runtime/__init__.py           /opt/strix-python/strix/runtime/__init__.py
 COPY strix/runtime/egress_proxy.py       /opt/strix-python/strix/runtime/egress_proxy.py
 RUN chown -R root:root /opt/strix-python/strix
