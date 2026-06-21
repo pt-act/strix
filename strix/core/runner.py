@@ -237,6 +237,7 @@ async def run_strix_scan(
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
             "caido_client": bundle["caido_client"],
+            "docker_client": bundle["client"],
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,

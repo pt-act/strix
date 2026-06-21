@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time as _time
 import uuid
@@ -97,6 +98,9 @@ async def run_agent_loop(
         if coordinator.is_shutting_down:
             logger.warning("Root agent %s halted by kill_switch", agent_id)
             return result
+
+        # SGL S3.1: poll egress-proxy target-health events before new work
+        await _poll_target_health(coordinator, context)
 
         # SGL governance: check cost ceiling before starting new work
         if coordinator.cost_ceiling is not None:
@@ -301,6 +305,9 @@ async def _run_noninteractive_until_lifecycle(
             )
             return result
 
+        # SGL S3.1: poll egress-proxy target-health events before each cycle
+        await _poll_target_health(coordinator, context)
+
         # SGL governance: check cost ceiling before each cycle
         if coordinator.cost_ceiling is not None:
             from strix.core.govern.cost_ceiling import CostSignal
@@ -416,11 +423,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             finally:
                 await coordinator.detach_stream(agent_id, stream)
         except Exception as exc:
-            # SGL governance: record error to breaker before handling
-            if coordinator.breaker is not None:
-                cycle_ms = (_time.monotonic() - cycle_start) * 1000.0 if cycle_start > 0 else 0.0
-                await coordinator.breaker.record(latency_ms=cycle_ms, is_error=True)
-
             if (
                 image_strips < 3
                 and session is not None
@@ -455,22 +457,70 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 raise
             return None
         else:
-            # SGL governance: record successful cycle to breaker, trip on OPEN
-            if coordinator.breaker is not None:
-                from strix.core.govern.breaker import BreakerState
-
-                cycle_ms = (_time.monotonic() - cycle_start) * 1000.0 if cycle_start > 0 else 0.0
-                new_state = await coordinator.breaker.record(
-                    latency_ms=cycle_ms, is_error=False
-                )
-                if new_state is BreakerState.OPEN:
-                    await coordinator.kill_switch(
-                        f"breaker_trip: {coordinator.breaker.trip_reason}"
-                    )
-                    return stream
-
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
+
+
+async def _poll_target_health(
+    coordinator: AgentCoordinator,
+    context: dict[str, Any],
+) -> None:
+    """Poll the sandbox container for egress-proxy target-health events.
+
+    S3.1: the breaker measures target-request health, not agent-cycle
+    health.  The egress proxy writes connection failures to a JSONL file
+    inside the container; this function reads them and feeds the breaker.
+    """
+    breaker = coordinator.breaker
+    if breaker is None:
+        return
+
+    docker_client = context.get("docker_client")
+    session = context.get("sandbox_session")
+    if docker_client is None or session is None:
+        return
+
+    container_id = getattr(
+        getattr(getattr(session, "_inner", None), "state", None),
+        "container_id",
+        None,
+    )
+    if not container_id:
+        return
+
+    try:
+        text = await asyncio.to_thread(
+            docker_client.exec_read_file,
+            container_id,
+            "/var/log/strix/target_health.jsonl",
+        )
+    except Exception:
+        return
+
+    if not text:
+        return
+
+    for line in text.strip().splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        latency_ms = event.get("latency_ms", 0)
+        is_error = event.get("is_error", True)
+        try:
+            await breaker.record(latency_ms=latency_ms, is_error=is_error)
+        except Exception:
+            pass  # best-effort; governance proceeds regardless
+
+    # Clear the file so we don't re-process on next poll.
+    try:
+        await asyncio.to_thread(
+            docker_client.exec_command,
+            container_id,
+            "truncate -s 0 /var/log/strix/target_health.jsonl",
+        )
+    except Exception:
+        pass
 
 
 async def _settle_run_result(

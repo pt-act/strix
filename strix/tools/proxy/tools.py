@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
@@ -81,6 +82,31 @@ def _err(name: str, exc: Exception) -> str:
         ensure_ascii=False,
         default=str,
     )
+
+
+async def _record_target_health(
+    ctx: RunContextWrapper,
+    *,
+    latency_ms: float,
+    is_error: bool,
+) -> None:
+    """S3.1: record a target-request outcome to the circuit breaker.
+
+    Called by proxy tools after each outbound request so the breaker
+    measures target health (latency + HTTP 5xx/429), not agent-cycle
+    wall time.
+    """
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    coordinator = inner.get("coordinator")
+    if coordinator is None or not hasattr(coordinator, "breaker"):
+        return
+    breaker = coordinator.breaker
+    if breaker is None:
+        return
+    try:
+        await breaker.record(latency_ms=latency_ms, is_error=is_error)
+    except Exception:
+        logger.debug("Target-health record failed; continuing", exc_info=True)
 
 
 @function_tool(timeout=120)
@@ -387,7 +413,6 @@ async def repeat_request(
 
         from strix.core.govern.scope import (
             ActionClass,
-            EngagementCtx,
             Target,
             Verdict,
             decide,
@@ -433,7 +458,23 @@ async def repeat_request(
             body=modified["body"],
         )
         replay = await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+
+        # S3.1: feed target-health signal (latency + HTTP 5xx/429) to breaker
+        parsed_response = caido_api.parse_raw_response(replay.get("response_raw"))
+        status_code = parsed_response.get("status_code") if parsed_response else None
+        is_degraded = status_code is not None and (status_code >= 500 or status_code == 429)
+        await _record_target_health(
+            ctx,
+            latency_ms=float(replay.get("elapsed_ms", 0)),
+            is_error=is_degraded,
+        )
+
         return _format_replay_tool_result(replay)
+    except (OSError, TimeoutError) as exc:
+        # S3.1: connection-level failure (refused/timeout/reset) is a
+        # target-health signal — the target itself is degraded/unreachable.
+        await _record_target_health(ctx, latency_ms=0.0, is_error=True)
+        return _err("repeat_request", exc)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
 

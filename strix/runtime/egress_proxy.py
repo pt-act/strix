@@ -36,11 +36,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import signal
 import socket
 import struct
+from pathlib import Path
 from typing import Final
 
 import ipaddress
@@ -430,6 +432,22 @@ async def _pipe(
             writer.close()
 
 
+def _write_target_health_event(**fields: Any) -> None:
+    """Append a target-health event to the shared log for S3.1.
+
+    The host-side agent loop polls this file via docker exec and feeds
+    events into the circuit breaker so it measures target-request health
+    (connection failures), not agent-cycle wall time.
+    """
+    path = Path("/var/log/strix/target_health.jsonl")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(fields, default=str) + "\n")
+    except Exception:
+        pass  # best-effort; enforcement proceeds regardless
+
+
 async def _handle_connection(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -472,12 +490,32 @@ async def _handle_connection(
         return
 
     try:
+        t0 = time.perf_counter()
         remote_reader, remote_writer = await asyncio.wait_for(
             asyncio.open_connection(dst_ip, dst_port),
             timeout=_CONNECT_TIMEOUT,
         )
+        latency_ms = (time.perf_counter() - t0) * 1000
+        # S3.1: record healthy connection for accurate error-rate denominator
+        await asyncio.to_thread(
+            _write_target_health_event,
+            latency_ms=round(latency_ms, 2),
+            is_error=False,
+            host=dst_ip,
+            port=dst_port,
+        )
     except (OSError, asyncio.TimeoutError) as exc:
         logger.warning("Forward to %s:%d failed: %s", dst_ip, dst_port, exc)
+        # S3.1: record connection-level target-health failure so the
+        # breaker trips on sustained connection refused/timeout/reset.
+        await asyncio.to_thread(
+            _write_target_health_event,
+            latency_ms=0,
+            is_error=True,
+            host=dst_ip,
+            port=dst_port,
+            error_type=type(exc).__name__,
+        )
         writer.close()
         return
 

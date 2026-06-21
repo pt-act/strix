@@ -162,3 +162,26 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             with contextlib.suppress(docker_errors.NotFound, docker_errors.APIError):
                 self.docker_client.containers.get(container_id).kill()
         return await super().delete(session)
+
+    def exec_read_file(self, container_id: str, path: str) -> str:
+        """Read a file from inside a running container.  Used by the
+        target-health poller (S3.1) to ingest egress-proxy failure events.
+        """
+        try:
+            container = self.docker_client.containers.get(container_id)
+            exit_code, output = container.exec_run(f"cat {path}", stdout=True, stderr=True)
+            if exit_code == 0:
+                return output.decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        return ""
+
+    def exec_command(self, container_id: str, command: str) -> None:
+        """Run a command inside a running container (fire-and-forget).
+        Used by the target-health poller to clear the ingest file.
+        """
+        try:
+            container = self.docker_client.containers.get(container_id)
+            container.exec_run(command, stdout=False, stderr=False)
+        except Exception:
+            pass
