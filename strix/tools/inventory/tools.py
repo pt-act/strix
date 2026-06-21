@@ -82,7 +82,7 @@ async def collect_inventory_from_code(
     )
 
 
-@function_tool(timeout=60)
+@function_tool(timeout=60, strict_mode=False)
 async def collect_inventory_from_proxy(
     ctx: RunContextWrapper,
     records: list[dict[str, Any]],
@@ -102,7 +102,7 @@ async def collect_inventory_from_proxy(
     )
 
 
-@function_tool(timeout=60)
+@function_tool(timeout=60, strict_mode=False)
 async def build_ranked_surface_map(
     ctx: RunContextWrapper,
     observations: list[dict[str, Any]],
@@ -166,7 +166,7 @@ async def classify_inventory_params(
     )
 
 
-@function_tool(timeout=60)
+@function_tool(timeout=60, strict_mode=False)
 async def spray_inventory_params(
     ctx: RunContextWrapper,
     target_id: str,
@@ -205,7 +205,7 @@ def _merge_extracted_into_endpoints(
                 endpoint.params[name] = _param_from_observation(obs)
 
 
-@function_tool(timeout=60)
+@function_tool(timeout=60, strict_mode=False)
 async def enrich_inventory_from_openapi(
     ctx: RunContextWrapper,
     spec: dict[str, Any],
@@ -299,7 +299,7 @@ def _build_c1c8_checklist(answers: list[dict[str, str]] | None) -> C1C8Checklist
     return checklist
 
 
-@function_tool(timeout=60)
+@function_tool(timeout=60, strict_mode=False)
 async def propose_vulnerability_investigation(
     ctx: RunContextWrapper,
     target_id: str,
