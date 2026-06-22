@@ -43,7 +43,7 @@ import signal
 import socket
 import struct
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import ipaddress
 import time
@@ -68,6 +68,13 @@ _RESOLVED_IP_TTL: Final = int(os.environ.get("STRIX_RESOLVED_IP_TTL", "300"))
 
 # SO_ORIGINAL_DST — Linux ioctl to recover the pre-REDIRECT destination.
 SO_ORIGINAL_DST: Final = 80
+
+# IP_TRANSPARENT — Linux socket option for TPROXY (transparent proxy).
+# Value 19 is the Linux kernel constant.
+IP_TRANSPARENT: Final = getattr(socket, "IP_TRANSPARENT", 19)
+
+# Whether the TCP listener is running in TPROXY mode.
+_tproxy_enabled: bool = False
 
 
 # ─────────────────────────────────────── context ───────────────────────────
@@ -359,7 +366,10 @@ class _DnsEnforcerProtocol(asyncio.DatagramProtocol):
         try:
             domain = _parse_qname(data)
         except Exception as exc:
-            logger.warning("DNS parse error from %s: %s — dropping", addr[0], exc)
+            logger.warning("DNS parse error from %s: %s — returning NXDOMAIN", addr[0], exc)
+            response = _nxdomain_response(data)
+            if self._transport and response:
+                self._transport.sendto(response, addr)
             return
 
         if not domain:
@@ -397,7 +407,17 @@ class _DnsEnforcerProtocol(asyncio.DatagramProtocol):
 
 
 def _get_original_dst(sock: socket.socket) -> tuple[str, int]:
-    """Return (ip, port) for the pre-REDIRECT destination via SO_ORIGINAL_DST."""
+    """Return (ip, port) for the original destination.
+
+    In TPROXY mode, the kernel preserves the original destination in
+    getsockname() on the accepted socket (no SO_ORIGINAL_DST needed).
+    In REDIRECT mode, we use the SO_ORIGINAL_DST ioctl.
+    """
+    if _tproxy_enabled:
+        # TPROXY: getsockname() returns the original destination.
+        ip, port = sock.getsockname()
+        return str(ip), int(port)
+    # REDIRECT fallback: use SO_ORIGINAL_DST ioctl.
     raw = sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, 16)
     port = struct.unpack_from("!H", raw, 2)[0]
     ip = socket.inet_ntoa(raw[4:8])
@@ -544,7 +564,7 @@ async def _health_server(socket_path: str) -> None:
 # ─────────────────────────────────────── entry point ──────────────────────
 
 
-async def _main(port: int, socket_path: str) -> None:
+async def _main(port: int, socket_path: str, bind: str = "127.0.0.1", force_redirect: bool = False) -> None:
     global _resolved_lock
     _resolved_lock = asyncio.Lock()
     _reload_ctx()
@@ -552,21 +572,45 @@ async def _main(port: int, socket_path: str) -> None:
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGHUP, _reload_ctx)
 
-    # TCP transparent proxy
-    tcp_server = await asyncio.start_server(_handle_connection, "127.0.0.1", port)
+    # TCP transparent proxy — TPROXY if available, else REDIRECT fallback.
+    global _tproxy_enabled
+    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if force_redirect:
+        _tproxy_enabled = False
+        logger.info("REDIRECT mode forced (--no-tproxy)")
+    else:
+        try:
+            tcp_sock.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
+            _tproxy_enabled = True
+            logger.info("TPROXY mode enabled (IP_TRANSPARENT set)")
+        except OSError as exc:
+            logger.warning("TPROXY not available (%s); falling back to REDIRECT mode", exc)
+            _tproxy_enabled = False
+    tcp_sock.bind((bind, port))
+    tcp_sock.listen()
+    tcp_server = await asyncio.start_server(_handle_connection, sock=tcp_sock)
 
-    # UDP DNS enforcement — same port number as TCP, separate socket
+    # UDP DNS enforcement — same port number as TCP, separate socket.
+    # In TPROXY mode we also set IP_TRANSPARENT so UDP/53 packets are
+    # delivered here without port rewriting (avoids conntrack issues).
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    udp_sock.bind(("127.0.0.1", port))
+    if _tproxy_enabled:
+        try:
+            udp_sock.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
+            logger.info("TPROXY mode enabled for UDP (IP_TRANSPARENT set)")
+        except OSError as exc:
+            logger.warning("TPROXY not available for UDP (%s)", exc)
+    udp_sock.bind((bind, port))
     udp_transport, _ = await loop.create_datagram_endpoint(
         _DnsEnforcerProtocol,
         sock=udp_sock,
     )
 
     logger.info(
-        "Egress proxy: TCP 127.0.0.1:%d + UDP DNS 127.0.0.1:%d, upstream=%s",
-        port, port, _DNS_UPSTREAM,
+        "Egress proxy: TCP %s:%d + UDP DNS %s:%d, upstream=%s",
+        bind, port, bind, port, _DNS_UPSTREAM,
     )
 
     health_task = asyncio.create_task(_health_server(socket_path))
@@ -588,5 +632,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=48081)
     parser.add_argument("--socket", default="/run/strix/decision.sock")
+    parser.add_argument("--bind", default="127.0.0.1",
+                        help="Bind address for TCP/UDP listeners (use 0.0.0.0 for gateway mode)")
+    parser.add_argument("--no-tproxy", action="store_true",
+                        help="Force REDIRECT mode even if IP_TRANSPARENT is available")
     args = parser.parse_args()
-    asyncio.run(_main(args.port, args.socket))
+    asyncio.run(_main(args.port, args.socket, args.bind, force_redirect=args.no_tproxy))

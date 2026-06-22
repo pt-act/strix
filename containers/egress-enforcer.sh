@@ -133,8 +133,11 @@ iptables -N STRIX_FILTER_OUTPUT 2>/dev/null || iptables -F STRIX_FILTER_OUTPUT
 iptables -A STRIX_FILTER_OUTPUT -m owner --uid-owner 0 -j ACCEPT
 iptables -A STRIX_FILTER_OUTPUT -m owner --uid-owner "${PROXY_UID}" -j ACCEPT
 iptables -A STRIX_FILTER_OUTPUT -o lo -j ACCEPT
-# Drop non-DNS UDP from non-exempt users (DNS already redirected above)
-iptables -A STRIX_FILTER_OUTPUT -p udp ! --dport 53 -j DROP
+# Allow DNS UDP that was redirected to the proxy port (REDIRECT changes dport,
+# so the filter table sees 48081, not 53)
+iptables -A STRIX_FILTER_OUTPUT -p udp --dport "${PROXY_PORT}" -j ACCEPT
+# Drop all other UDP from non-exempt users
+iptables -A STRIX_FILTER_OUTPUT -p udp -j DROP
 iptables -A OUTPUT -j STRIX_FILTER_OUTPUT
 
 echo "[egress-enforcer] iptables rules installed"

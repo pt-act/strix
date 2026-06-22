@@ -38,6 +38,8 @@ pip-delete-this-directory.txt
 .project
 .pydevproject
 .settings/
+.kilo/
+.qwen/
 
 # FastAPI
 .env.local

@@ -1,0 +1,43 @@
+# Dockerfile.gateway — S0-v2 egress-gateway container
+#
+# Runs the transparent decision proxy outside the agent's container.
+# Agent traffic on the internal Docker network is the only traffic that
+# reaches this container; the gateway enforces scope via iptables
+# FORWARD/PREROUTING rules in its own netns.
+#
+# Build:
+#   docker build -f containers/Dockerfile.gateway -t strix-egress-gateway:latest .
+#
+# The agent container (running as root in its own netns) cannot reach or
+# flush these rules — it is a different container with no Docker API access.
+
+FROM python:3.12-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        iptables \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install strix governance modules (scope decision service + egress proxy)
+# into the system Python path.  Only pydantic + typing_extensions needed.
+RUN pip install --no-cache-dir \
+    'pydantic>=2.13,<3' \
+    'typing_extensions>=4.15'
+
+COPY strix/ /opt/strix-python/strix/
+RUN find /opt/strix-python/strix -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+RUN chown -R root:root /opt/strix-python/strix
+
+ENV PYTHONPATH=/opt/strix-python
+
+# Audit log directory
+RUN mkdir -p /var/log/strix
+
+COPY containers/gateway-entrypoint.sh /usr/local/bin/gateway-entrypoint.sh
+RUN chmod +x /usr/local/bin/gateway-entrypoint.sh
+
+EXPOSE 48081/tcp
+EXPOSE 48081/udp
+
+ENTRYPOINT ["gateway-entrypoint.sh"]
